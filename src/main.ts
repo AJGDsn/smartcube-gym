@@ -2043,7 +2043,7 @@ function buildTopBar(): HTMLElement {
   if (state.showStats) { statsBtn.style.borderColor = 'var(--accent)'; statsBtn.style.fontWeight = '600'; statsBtn.style.color = 'var(--accent)'; }
   statsBtn.title = state.showStats ? 'Close stats' : 'Show stats';
   top.appendChild(statsBtn);
-  const help = iconBtn('?', () => window.open('https://github.com/ianjohndawson/smartcube-gym/blob/main/MANUAL.md', '_blank'));
+  const help = iconBtn('?', () => window.open('https://github.com/AJGDsn/smartcube-gym/blob/main/MANUAL.md', '_blank'));
   help.title = 'User manual';
   top.appendChild(help);
   top.appendChild(iconBtn('⚙', () => { state.showSettings = true; render(); }));

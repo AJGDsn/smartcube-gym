@@ -62,7 +62,7 @@ deliberately *before* any further deletion.
 The cube-MAC key is `block-trainer.cube-mac` — the **sibling project's**
 namespace — while everything else uses `cube-trainer.*`. A leftover from the
 Block Trainer fork. The bigger point: all GitHub Pages projects on this account
-share one origin (`ianjohndawson.github.io`), and `localStorage` is per-origin,
+share one origin (`ajgdsn.github.io`), and `localStorage` is per-origin,
 not per-path — so SmartCube Gym, the LarsPetrus site, and any Block Trainer
 deploy all read/write the *same* store. Generic keys risk cross-app
 contamination. Centralise into one `storage.ts` with a single prefix and typed

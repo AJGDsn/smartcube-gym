@@ -191,7 +191,7 @@ Your cube data remains on your device.
 ### Installation
 
 ```bash
-git clone https://github.com/ianjohndawson/smartcube-gym.git
+git clone https://github.com/AJGDsn/smartcube-gym.git
 cd smartcube-gym
 npm install
 ```

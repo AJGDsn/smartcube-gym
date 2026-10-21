@@ -1,7 +1,7 @@
 // Centralised localStorage access for SmartCube Gym.
 //
 // Why this module exists: every GitHub Pages project on this account is served
-// from the same origin (ianjohndawson.github.io), and localStorage is keyed
+// from the same origin (ajgdsn.github.io), and localStorage is keyed
 // per-origin, not per-path. So this app, the LarsPetrus page, and any Block
 // Trainer deploy all read and write the *same* store. Two defences live here:
 //   1. Every key carries the `cube-trainer.` prefix, so we never collide with a

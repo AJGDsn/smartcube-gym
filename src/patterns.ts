@@ -1,7 +1,7 @@
 // Named block-building pattern detection — the Lars Petrus vocabulary.
 //
 // Grounded in the Block Building Patterns section of Ian's Lars Petrus mirror
-// (ianjohndawson.github.io/LarsPetrus #blox); definitions signed off 2026-07-10:
+// (ajgdsn.github.io/LarsPetrus #blox); definitions signed off 2026-07-10:
 //
 //   Simple join          a target corner+edge are ONE move from forming a pair
 //   Double join          one move completes a 2×2×1 (corner + 2 edges + centre)

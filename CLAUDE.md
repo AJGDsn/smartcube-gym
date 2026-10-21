@@ -50,7 +50,7 @@ every harness at **0 mismatches**; add an oracle harness for any non-trivial alg
 
 ## localStorage
 All `localStorage` access goes through `src/storage.ts`. All GitHub Pages projects
-on this account share one origin (`ianjohndawson.github.io`), so keys carry the
+on this account share one origin (`ajgdsn.github.io`), so keys carry the
 `cube-trainer.` prefix to avoid cross-app contamination. Use validated reads — fall
 back to default if a stored value isn't a known enum member. Cube MACs are stored
 **per device** (keyed by `BluetoothDevice.id`), never as a single shared key.
