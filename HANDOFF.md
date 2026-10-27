@@ -178,7 +178,14 @@ another pair is already riding; correct, if occasionally deadpan).
 
 ---
 
-## In progress (2026-07-26) — the UI/UX overhaul
+## Done (2026-07-26) — the UI/UX overhaul
+
+**Shipped in 8 commits on `ui-overhaul`, fast-forwarded to `main` and deployed:**
+themes 4→2 · setup-phase meter fix · `repPhase()` · Now bar · verb tiers (one
+escalating Help) · brief out of the console · Review/Stats layout modes · the
+inspection gate (its own section below). The agreed direction below is kept as the
+design record; the IA bullet (pillars on the skill axis) is the one part still
+outstanding — see "Remaining".
 
 A review found the shell to be a *document* layout being asked to behave like an
 *instrument*: every phase of a rep is expressed by rewriting the contents of one
@@ -189,7 +196,7 @@ are all new phases, so that shape has to change first. Agreed direction:
   the cube (no prose). A **Now bar** under it holds the current instruction plus
   this phase's one or two verbs, replacing the fading toast, the hold caption, the
   scramble caption and the standing find-prompt. The console becomes a Log.
-- **`repPhase()` is the keystone** (not yet written): `setup → inspect → solve →
+- **`repPhase()` is the keystone** (since shipped): `setup → inspect → solve →
   review`, with `walkthrough` / `lookahead` / `identify` / `track` as solve
   sub-phases. One function owns the phase; the Now bar, the allowed verbs, the
   stage decorations and the meter all read from it instead of re-deriving from
@@ -416,11 +423,139 @@ Everything from here is behaviour-visible — verify in the browser as well as t
   follows (6% of 222 moves, 8% of 123, 17.6% of 223) — so it is Ian's call, not a
   unilateral fix. Hysteresis and path-independence are fundamentally incompatible.
 - The chip row overflows narrow viewports: at 375px the six Foundations lesson
-  chips force `.col` to 527px and the whole page scrolls sideways. `.chips` is a
-  non-wrapping flex row and `.col` is a grid item with the default
-  `min-width: auto`, so the track expands to the chips' min-content width. Isolated
-  by hiding each child of `.col` in turn; trainers with no chips panel are clean.
-  CSS-only, unrelated to the overhaul.
+  chips exceed their row. `.chips` is a non-wrapping flex row (`src/style.css`
+  line ~686 — no `flex-wrap`). Isolated by hiding each child of `.col` in turn;
+  trainers with no chips panel are clean. CSS-only, unrelated to the overhaul.
+  **Half-fixed:** the knock-on effect — `.col` was a grid item with the default
+  `min-width: auto`, so the track expanded to the chips' min-content width (527px)
+  and the *whole page* scrolled sideways — went away with `.col { min-width: 0 }`
+  added during overhaul step 7. So the page no longer scrolls; the chips still
+  overflow their own row, which is all that remains.
+
+---
+
+## Done (2026-08-22) — the cube-sync repair that was merged and then reverted
+
+An externally-produced repair (PR #2, `repair/cube-sync-reliability`) for
+smart-cube seeding and idle resynchronisation. Five files, +226/−44, green on every
+harness and on CI. **Merged (`796b4cd`), deployed, and reverted the same afternoon
+(`d387d4b`) — the tree is byte-identical to `ae34bd3` again.** Read this before
+re-landing any part of it.
+
+What it contained, and the verdict on each half:
+
+- **Connect seeding** (`MoveSeedGate` in a new `src/cube-sync.ts`). Bounds the wait
+  for the first `FACELETS` at 1.8s and replays buffered moves exactly once, so a
+  cube whose state request goes unanswered can't leave the scramble stuck at 0/16.
+  Sound in itself — but its premise needs checking on hardware, see below.
+- **Idle reconciliation.** Accept a passive `FACELETS` once the cube has been still
+  for 700ms, bridge up to six moves. **This is the half that broke, and it was
+  already known to break.** Essentially line-for-line the policy shipped in
+  `3d91503` and reverted hours later in `69409b0` (June): same 700ms, same
+  `explicit = awaitingSync` split, same `findBridge(…, 6)`, same explicit-only
+  big-divergence reset. The PR described it as behaviour an older commit
+  "introduced but which was subsequently lost" — it was not lost, it was
+  deliberately removed for corrupting move tracking on the real cube.
+- **Bounded manual Sync**, and the `bluetooth.ts` reordering (FACELETS before
+  battery/hardware, each optional command isolated, `requestFacelets()` returning
+  `Promise<boolean>`). Uncontroversial in themselves, but the reordering is a real
+  behavioural change for GAN that went out untested on hardware.
+
+**What hardware said.** MoYu worked; every GAN cube "connected, but no moves
+registered" — verbatim the symptom the pre-June comment predicted: *"Acting on them
+would 'correct' the model backwards by a move (undoing a turn you just made, so
+progress never advances)."* The moves did register; the idle snapshot 700ms later
+computed the inverse of the turn just made and undid it.
+
+**The finding that matters most — the library already does this, properly.** In
+`node_modules/smartcube-web-bluetooth/src/gan-cube-protocol.ts` every GAN move
+carries a serial (0–255, incremented per state change). `evictMoveBuffer` detects a
+gap (`diff > 1`) and calls `requestMoveHistory` to fetch **the real missed moves out
+of the cube's own buffer**, holding the FIFO back until the gap is filled. So
+app-level bridging from a lagging facelet snapshot is a strictly worse mechanism
+layered on top of a correct one. **Don't duplicate it.**
+
+Two corollaries:
+
+- **Why MoYu was fine.** That serial/move-history recovery lives only in the GAN
+  core protocol — the MoYu/QiYi/GoCube wrappers have no equivalent — and MoYu
+  reports true absolute state, so snapshot reconciliation is both useful and safe
+  there. The exact split observed falls straight out of that asymmetry, so any
+  future reconciliation should be **per-protocol, not global**.
+- **Check the seeding premise before rebuilding it.** The same file accepts MOVE
+  events only after the first FACELETS (`if (this.lastSerial != -1)`), so on GAN the
+  library emits nothing until state arrives — meaning the "every move swallowed
+  during seeding" bug may not exist on GAN at all, and a 1.8s replay timeout would
+  have nothing queued to replay.
+
+**Why CI could not catch any of it.** `scripts/cube-sync-check.ts` (11/11) exercised
+only the pure `cubeIsAtRest` predicate and the `MoveSeedGate` class. The
+reconciliation *policy* is observable only with a cube in hand. A green harness on a
+BLE change means the units are sound, not that the behaviour is.
+
+`de01962` and `origin/repair/cube-sync-reliability` still exist if a narrower version
+is wanted. PR #2 reads as merged-then-reverted, which is the honest record.
+
+## Done (2026-08-22/26) — two coaching fixes on the new shell
+
+### A hint outlives the turn it prompted (`470dbab`)
+`step()` cleared `state.assist` on **every** move, and both the cube-card note and
+the coaching box read from it — so one turn wiped the highlight, the pattern name and
+the technique together, usually before they had been read. Recovery was impossible
+rather than merely awkward: the escalating Help button reads the `helpUsed` ratchet,
+so once a hint had been taken the button was already "More help", and pressing it
+spends a rung and hands over a move. **A regression introduced by the overhaul
+itself** — the old three-button version let you press Nudge again for free
+(`helpUsed` is a `Math.max`).
+
+`survivingAssist()` now keeps a **nudge** across turns, refreshing `focus.current`
+through `locatePieceNow` so the highlight follows the piece, and retiring it once
+that piece is home. Next-move and route still clear: they are move lists, wrong one
+turn later, and refreshing them would be autopilot that quietly makes every rep a
+rung-3 rep. Deliberately does **not** re-derive the route per turn —
+`locatePieceNow` is a table lookup, but `idealRoute` is a search (~130ms on a deep
+2×2×3, which is why `idealLen` is memoized), and that lag would land on every move.
+
+**Design lesson worth keeping:** collapsing several controls into one escalating
+control can strand the rungs below it. When doing that, check that every state the
+old controls could reach is still reachable.
+
+### EO stops printing its own answer, and a daily practice tally (`1fd01e5`)
+**EO concealment.** The step meter read `8/12 edges oriented · ideal 4` from the
+moment the scramble landed — the bad-edge count (the recognition skill the five EO
+trainers exist to build) plus the optimal length (the shape of the solution). The
+inspection gate made it worse by putting both on screen during the one phase meant
+to be planning. It was also inconsistent with the app's own grading: **Hint** says
+"4 bad edges", spends a rung and prints "used: a hint" on the review — for the same
+number the meter gave away one line below. `concealsProgress(s)` (`s.kind === 'eo'`)
+holds back the fill, the caption and both copies of the ideal (the header tag in
+`buildSessionPane`, the `· ideal N` in `buildStepMeter`), and the count lands in the
+review as a `bad edges · N at the start` fact. The empty meter track still renders so
+the pane keeps its shape. **Blocks are deliberately untouched:** their pieces are
+visible on the cube, so a placed-count reports what you can already see.
+
+**Practice tally** (`stats.ts`: `DailyTally`, `dayKey`, `loadDaily`, `bumpDaily`,
+`discardDaily`, `dailyRows`; `buildPracticeTally()` in `main.ts`; new `'daily'`
+storage key). Reps per day per step, under course progress, with a
+14-**calendar**-day chart so the gaps show. Stored rather than derived from
+`history`, because history is capped at 500 solves and the early days would age out
+of their own chart; the first read seeds itself from whatever history still holds,
+and `discardLastSolve` rolls a count back.
+
+`scripts/daily-check.ts` (16 checks, wired into `npm run check` — **now 14
+harnesses**: `cube-sync-check` left with the revert, so this took the suite 13 → 14)
+covers exactly the hazard that two records of one fact create, and
+earned its keep on the first run: `recordSolve` appended to `history` *before*
+bumping, so the lazy seed inside `bumpDaily` found the new rep already in history and
+counted it twice. Every first solve would have logged as two. Fixed by settling the
+seed first.
+
+### Deploy note (2026-08-26)
+The push for `1fd01e5` produced no workflow run: Actions was in a major outage and
+had throttled inbound traffic. The run arrived later as a `push` event once the
+backlog drained — pushes in that window were **delayed, not dropped**. Don't read a
+slow build as a broken one; `workflow_dispatch` on `main` is the clean re-trigger if
+one is ever genuinely lost.
 
 ---
 
@@ -440,6 +575,18 @@ pure move), so left as a deliberate follow-up.
 - Gate the `window.gym` debug hook behind `import.meta.env.DEV`.
 - A `noUncheckedIndexedAccess` pass (~84 fixes; worthwhile for index-heavy code).
 - `npm audit`: esbuild/vite **dev-server-only** advisory; fix is a Vite major — defer.
+
+### Stranded work — uncommitted, easily lost
+`.claude/worktrees/hungry-shaw-506939` holds **uncommitted** modifications to
+`src/placement.ts` and `scripts/placement-check.ts` — the placement-anchor /
+hysteresis problem — on `claude/hungry-shaw-506939` at `49e9d00`, now **14 commits
+behind `main`**. It survives on disk only; nothing is in git history. It carries the
+open path-independence decision with it (see the second bullet under "Known, not yet
+addressed"), so it wants adjudicating — review, measure against alternatives, then
+land or discard — rather than merging blind. Untouched since 2026-07.
+
+A second worktree, `.claude/worktrees/practical-morse-7ea324`, is clean and on a
+detached HEAD at `a7202de`; nothing to rescue there.
 
 ### Method / feature roadmap (Ian's, longer-term)
 - Roux LSE-EO needs a separate **M/U engine EO axis** (engine EO is F/B only) — the
@@ -484,5 +631,9 @@ pure move), so left as a deliberate follow-up.
 - **Keep every harness at 0 mismatches**; add one when adding a non-trivial algorithm.
 - **Don't pipe `tsc` through `head`** (SIGPIPE undercounts errors) — redirect to a file.
 - **BLE can't be tested without hardware** — verify cube changes live with the
-  in-app event log; don't ship blind BLE changes.
+  in-app event log; don't ship blind BLE changes. A green harness proves the units,
+  not the behaviour (see the 2026-08-22 revert). Two specifics learned there:
+  **the library already recovers missed GAN moves** from the cube's own history via
+  the move serial, so never bridge from a facelet snapshot to do the same job; and
+  reconciliation differs per protocol, so it must never be applied globally.
 - All `localStorage` access goes through `src/storage.ts`.

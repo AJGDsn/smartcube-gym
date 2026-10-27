@@ -178,6 +178,12 @@ All EO trainers follow the app's conventions: **scramble white-top/green-front,
 solve yellow-top**. An edge is *bad* if it cannot be solved without a quarter
 turn of F/B (for the standard axis) — the hint explains per case.
 
+**The app will not count the bad edges for you.** On EO steps the progress meter
+holds back the orientation count, the bar and the ideal length for the whole rep:
+counting them is the recognition skill these trainers exist to build, and it is
+the one thing **Hint** charges a rung for. The number lands in the review as
+"bad edges · N at the start", so you can check it against what you counted.
+
 - **Full** — orient all 12 edges, nothing else. You may solve against either
   side axis (Blue front or Red front); by default the app just reads which one
   you solved off the finished cube. The review compares both axes ("Red was 7,
@@ -215,6 +221,12 @@ turn of F/B (for the standard axis) — the hint explains per case.
 Help is a **ladder with one button**, from least to most revealing. Press **Hint**
 and it becomes **More help**; a note beside it records what you have taken this
 rep, because that is the one thing the lesson grading reads.
+
+A **Hint stays on screen while you work.** It survives your turns, and its
+highlight follows the piece around the cube as you set it up, retiring itself the
+moment that piece is home — so you can read it at your own pace instead of losing
+it to the turn it prompted. A next move or a revealed route still clears on your
+first turn: one move later, they are simply wrong.
 
 1. **Hint** — names what you're looking at and how to approach it, without
    giving moves. On block steps it names the **pattern** the taught route is
@@ -254,6 +266,8 @@ After each step completes:
   available? ("cheapest was the orange-blue-yellow corner (4) — you built the
   white-red-blue corner (6)"). Available on 2×2×2 and 1×2×3 steps.
 - **inspection:** how long you looked before your first move.
+- **bad edges:** on EO steps, how many you started with — the count the meter
+  deliberately withheld all rep, so you can mark your own recognition.
 - **patterns:** which named techniques the ideal route uses, and which your own
   solve used — the vocabulary making both visible.
 - EO trainers add the two-axis comparison instead.
@@ -337,9 +351,20 @@ review — mid-solve they're just moves.
 ## Stats
 
 The top-bar **Stats** shows: average over ideal and % optimal solves, course
-stars per track, your lookahead accuracy, solve-time trend (timed solves),
-extra-moves for the last 12, and per-step averages. History keeps the last 500
-solves, all in your browser's local storage.
+stars per track, your **practice tally**, your lookahead accuracy, solve-time
+trend (timed solves), extra-moves for the last 12, and per-step averages.
+
+**Practice tally** — how many reps you finished today and of what, then one bar
+per day for the last fortnight. Every other chart here measures how *well* you
+solved; this is the one that answers whether you turned up, and on what. The
+window is calendar days rather than the days you practised, so a week off reads
+as a row of stubs instead of being averaged away. Hovering a bar gives that day's
+breakdown. Only completed reps count, and discarding a solve rolls its count back.
+
+History keeps the last 500 solves. The daily counts are stored separately so they
+outlive that cap — they seed themselves from whatever history still holds the
+first time you open Stats, so the tally doesn't start out pretending you have
+never practised. All in your browser's local storage.
 
 ## Getting the most out of it
 

@@ -47,6 +47,16 @@ every harness at **0 mismatches**; add an oracle harness for any non-trivial alg
 - **Build targets differ:** `tsconfig` targets ES2022 but vite builds es2020.
   esbuild down-levels *syntax* only, not *APIs* (e.g. `.at()`, `findLast`).
   Prefer matching them (low-priority item in HANDOFF).
+- **Never auto-reconcile the model from a facelet snapshot.** Shipped and reverted
+  three times now (`3d91503`→`69409b0`, then `796b4cd`→`d387d4b`). GAN snapshots lag
+  the live move stream, so bridging to one computes the inverse of the turn you just
+  made and undoes it — the cube appears to register nothing. The library **already**
+  recovers missed GAN moves exactly, from the cube's own buffer via the move serial
+  (`gan-cube-protocol.ts`, `evictMoveBuffer`/`requestMoveHistory`); don't rebuild
+  that badly on top of it. Recovery also differs per protocol — MoYu/QiYi have no
+  equivalent — so reconciliation must never be global. A green harness here proves
+  the units, not the behaviour: **BLE changes need a cube in hand.** Full write-up
+  in HANDOFF under "the cube-sync repair that was merged and then reverted".
 
 ## localStorage
 All `localStorage` access goes through `src/storage.ts`. All GitHub Pages projects
