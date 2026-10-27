@@ -415,8 +415,8 @@ Everything from here is behaviour-visible — verify in the browser as well as t
   fixing it would shorten real rewind sequences — but it touches a graded-adjacent
   display, so it wants its own change rather than riding along with UI work.
 - ~~On free-placement block trainers the displayed `ideal` can change mid-solve
-  without the cube state changing~~ — **fixed on `placement/lookahead-anchor`
-  (2026-10-27), pending Ian's OK to merge.** See "Placement pick by reach" below.
+  without the cube state changing~~ — **fixed 2026-10-27 (`b487388`).** See
+  "Placement pick by reach" above.
   Correction for the record: this bullet used to say the "no-signal half" was
   addressed in a separate session. It never landed — it sat uncommitted in a
   worktree — so `main` still had the full drift until this branch.
@@ -557,7 +557,7 @@ one is ever genuinely lost.
 
 ---
 
-## Done (2026-10-27) — Placement pick by reach (branch `placement/lookahead-anchor`, not yet merged)
+## Done (2026-10-27) — Placement pick by reach (merged to `main` as `b487388`, deployed)
 
 **The problem.** Which block the coaching follows (progress, ideal, hints) was
 picked by *whole pieces placed*, with hysteresis threading the last pick through
@@ -638,13 +638,10 @@ pure move), so left as a deliberate follow-up.
 - A `noUncheckedIndexedAccess` pass (~84 fixes; worthwhile for index-heavy code).
 - `npm audit`: esbuild/vite **dev-server-only** advisory; fix is a Vite major — defer.
 
-### Stranded work — adjudicated 2026-10-27, safe to discard
-`.claude/worktrees/hungry-shaw-506939` holds an **uncommitted** placement fix (the
-"no-signal half": anchor to the canonical while nothing is placed). Reviewed and
-measured: it cut no-op drift only from ~19% to ~10–15% and made accuracy slightly
-*worse* (2×2×2 late-solve 68% → 67%, 1×2×3 56% → 55%, 2×2×3 64% → 59%). Superseded
-by `placement/lookahead-anchor`. Nothing in it needs rescuing; the worktree can be
-removed once Ian agrees.
+### Stranded work — resolved 2026-10-27
+The uncommitted placement fix in `.claude/worktrees/hungry-shaw-506939` was
+reviewed, measured (drift only ~19% → 10–15%, accuracy slightly worse), superseded
+by the reach pick, and the worktree and its branch removed with Ian's OK.
 
 A second worktree, `.claude/worktrees/practical-morse-7ea324`, is clean and on a
 detached HEAD at `a7202de`; nothing to rescue there.
