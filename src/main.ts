@@ -28,7 +28,7 @@ import {
 } from './steps.ts';
 import { locatePieceNow, nextFocusPiece, nextTwoFocusPieces, pieceDescription, placementName, slotName, targetPieceStates, type FocusPiece } from './pieces.ts';
 import { humanSolveFromState } from './human-solve.ts';
-import { activePlacement, canonicalIndexIn, scorePlacement } from './placement.ts';
+import { activePlacement, anchorPlacement, canonicalIndexIn, scorePlacement } from './placement.ts';
 import { classifyRoute, isPairJoined, PATTERN_HOW, routeRoles, type MoveRole, type PatternName } from './patterns.ts';
 import { lessonSeedsFor, seedsFor } from './cases.ts';
 import { derivePhase, firstOpenLesson, lessonsFor, successCount, type LessonDef, type LessonPhase } from './lessons.ts';
@@ -72,8 +72,9 @@ function blockPiecesFor(mask: StepDef['canonicalMask']): number[][] {
 
 // --- placement-aware coaching target ---
 // Which of a block step's accepted placements the coaching aims at: the one the
-// user is actually building (threaded per-move through state.placementIdx with
-// hysteresis — see placement.ts), else the canonical. Completion acceptance
+// user is actually building (re-picked each move into state.placementIdx from
+// the live and step-start states — see placement.ts), else, before the first
+// move, the step-start pick itself. Completion acceptance
 // (solvedStepMask) is unchanged; this only points progress/ideal/hints/Learn at
 // the user's block instead of insisting on bottom-left. EO-family steps never
 // come through here — their targets are axis-aware, handled by their own paths.
@@ -88,7 +89,7 @@ function canonicalIdxFor(s: StepDef): number {
 }
 function activeMask(s: StepDef): StepDef['canonicalMask'] {
   if (s.kind !== 'block' || s.candidateMasks.length <= 1) return s.canonicalMask;
-  return s.candidateMasks[state.placementIdx ?? canonicalIdxFor(s)];
+  return s.candidateMasks[state.placementIdx ?? anchorPlacement(state.stepStartCube, s.candidateMasks, canonicalIdxFor(s))];
 }
 
 // Tap-to-aim (2×2×2 family): tapping any sticker of a CORNER cubie names one
@@ -232,7 +233,7 @@ interface State {
   stepStartCube: Cube3x3; // live cube state at the start of the current step (for state-based ideal/scoring)
   movesThisStep: Move3x3[];
   movesThisStepTs: number[]; // Date.now() per movesThisStep move (raw stream — pause/lookahead analysis)
-  placementIdx: number | null; // block steps: the candidate placement coaching aims at (hysteresis pick)
+  placementIdx: number | null; // block steps: the candidate placement coaching aims at (null = the step-start pick)
   placementPinned: boolean; // user tapped a corner to aim — the pick stops second-guessing them
   solveReadyMs: number | null; // when the scramble completed — inspection runs until the first move
   /** Inspection gate: you've pressed Ready and committed to a plan. Per-rep, and
@@ -786,10 +787,11 @@ function afterChange() {
   } else {
     const s = currentStep();
     // Placement-aware coaching: re-pick which accepted placement the user is
-    // building (hysteresis keeps it stable) BEFORE progress/flash/completion
-    // read it — everything downstream this move sees one consistent target.
+    // building (anchored on the step's start state, so it is stable and a no-op
+    // can't move it) BEFORE progress/flash/completion read it — everything
+    // downstream this move sees one consistent target.
     if (s && s.kind === 'block' && s.candidateMasks.length > 1 && !state.placementPinned) {
-      state.placementIdx = activePlacement(state.cube, s.candidateMasks, state.placementIdx, canonicalIdxFor(s));
+      state.placementIdx = activePlacement(state.cube, s.candidateMasks, state.stepStartCube, canonicalIdxFor(s));
     }
     // Flash when a piece is placed / edge oriented (within the same step).
     if (s) {
@@ -1511,7 +1513,9 @@ function idealLen(start: Cube3x3, s: StepDef): number | null {
   if (isBlockEo(s)) return solveFromState(start, blockEoTarget(state.blockEoOrient), s.solver)?.length ?? 0;
   if (isFreeEo(s)) return eoAxisOptimalLen(start, s, state.eoAxis);
   const mask = activeMask(s);
-  const key = `${s.id}:${state.placementIdx ?? -1}:${start.encode()}`;
+  // Keyed by the mask actually in use, not placementIdx: null (the step-start
+  // pick) and that same pick's index must share one 130ms search.
+  const key = `${s.id}:${s.candidateMasks.indexOf(mask)}:${start.encode()}`;
   if (idealMemo?.key !== key) {
     idealMemo = { key, len: solveFromState(start, mask, s.solver)?.length ?? null };
   }

@@ -7,20 +7,28 @@
 // block. This module decides WHICH placement the user is actually going for,
 // so progress, the ideal count, hints and Learn can follow the user.
 //
-// The pick is deliberately conservative (hysteresis): the incumbent placement
-// keeps the job unless a challenger has STRICTLY more whole pieces placed.
-// Whole pieces — not facelet matches — because facelet counts fluctuate with
-// every turn of a scrambled cube and would make the coaching target flap
-// mid-solve. When nothing is decided yet (step start, all zeros), ties fall
-// back to facelet matches, then the caller's preferred index (the canonical
-// placement today; a user-committed pick once inspection training exists).
+// The signal is REACH, not just pieces placed: for each candidate, the most of
+// its pieces that sit solved within one turn, then within two, then now. A
+// corner-edge pair waiting to be inserted, or a finished block offset by one
+// layer, is invisible to a placed count but is exactly what a blockbuilder's
+// work in progress looks like. Placed counts alone tie on ~70–80% of the states
+// where the user's block is identifiable, so the old pick was a guess most of
+// the time (68% right late in a 2×2×2 solve; 93% with reach).
+//
+// Stability comes from an ANCHOR, not from memory: the pick made on the step's
+// start state keeps the job unless a challenger strictly out-reaches it. That
+// is a pure function of (start state, live state), so a no-op sequence — U U U U,
+// a wrong turn undone — always lands back on the same pick. The previous design
+// threaded the last pick through every move (hysteresis), which made the pick a
+// fold over the move path: about one no-op excursion in five handed the job to
+// a different block for good and moved the displayed ideal under the user.
 //
 // Pure geometry over the live cube state — no app state, no solver calls.
-// Guarded by scripts/placement-check.ts (invariants: the pick always carries
-// the max placed count; it changes only when strictly beaten; finishing any
-// candidate means the pick's own mask is solved).
+// Guarded by scripts/placement-check.ts (reach agrees with turning the engine's
+// own cube; the pick is the anchor unless strictly out-reached; no-op sequences
+// never move it; a finished block is always picked).
 
-import { SOLVED_FACELET_CUBE, type Cube3x3, type Cube3x3Mask } from './engine-api.ts';
+import { Cube3x3, MOVESETS, SOLVED_FACELET_CUBE, type Cube3x3Mask, type Move3x3 } from './engine-api.ts';
 import { NET_COORDS } from './blocks.ts';
 
 // Facelets grouped into movable cubies (pieces): coordinate groups with more
@@ -71,29 +79,134 @@ export function canonicalIndexIn(candidates: Cube3x3Mask[], canonical: Cube3x3Ma
   return at >= 0 ? at : 0;
 }
 
+// --- reach ------------------------------------------------------------------
+// Each outer turn as a facelet permutation, read off the engine itself by turning
+// a cube whose 54 stickers are all distinct: after the turn, slot j holds what
+// was at PERM[j]. Deriving rather than hand-writing them means the tables can't
+// disagree with the cube the rest of the app tracks.
+const TURNS = ['U', 'D', 'L', 'R', 'F', 'B'].flatMap((f) => ['', '2', "'"].map((x) => f + x)) as Move3x3[];
+const PERM: number[][] = (() => {
+  const labels = Array.from({ length: 54 }, (_, i) => String.fromCharCode(0x100 + i));
+  const c = new Cube3x3(MOVESETS.Full, labels as never, labels as never);
+  return TURNS.map((m) => (c.clone().applyMove(m).stateData as unknown as string[]).map((x) => x.charCodeAt(0) - 0x100));
+})();
+// Probes: the state itself, every state one turn away, then every two-turn
+// sequence on two different faces (a repeated face is already a single turn) —
+// 1 + 18 + 270, flattened into one table. Probe q reads slot j from PROBES[q*54+j].
+const N_ONE = 1 + PERM.length;
+const PROBES: Int16Array = (() => {
+  const all: number[][] = [Array.from({ length: 54 }, (_, i) => i), ...PERM];
+  TURNS.forEach((a, i) => TURNS.forEach((b, j) => {
+    if (a[0] !== b[0]) all.push(PERM[j].map((k) => PERM[i][k]));
+  }));
+  return Int16Array.from(all.flat());
+})();
+const N_PROBES = PROBES.length / 54;
+
+// Pieces as flat facelet runs with their solved colours, so the hot loop touches
+// only typed arrays. Piece p spans PIECE_F[PIECE_AT[p] .. PIECE_AT[p+1]).
+const PIECE_AT = Int16Array.from(PIECES.reduce((acc, g) => [...acc, acc[acc.length - 1] + g.length], [0]));
+const PIECE_F = Int16Array.from(PIECES.flat());
+const SOLVED_CODE = Uint16Array.from(SOLVED_FACELET_CUBE as readonly string[], (x) => x.charCodeAt(0));
+
+// Indices into PIECES of the pieces each mask covers.
+const pieceIdxCache = new WeakMap<Cube3x3Mask, number[]>();
+function pieceIdxFor(mask: Cube3x3Mask): number[] {
+  let p = pieceIdxCache.get(mask);
+  if (!p) {
+    const set = new Set(mask.solvedFaceletIndices);
+    p = PIECES.flatMap((g, i) => (g.some((f) => set.has(f)) ? [i] : []));
+    pieceIdxCache.set(mask, p);
+  }
+  return p;
+}
+
+export interface PlacementReach {
+  now: number[]; // per candidate: whole pieces placed in this state
+  one: number[]; // most placed in any state within one turn (≥ now)
+  two: number[]; // most placed in any state within two turns (≥ one)
+}
+
+/** Per-candidate reach: ~0.2ms for 24 candidates, cheap enough for every move. */
+export function placementReach(cube: Cube3x3, candidates: Cube3x3Mask[]): PlacementReach {
+  const f = Uint16Array.from(cube.stateData as readonly string[], (x) => x.charCodeAt(0));
+  const lists = candidates.map(pieceIdxFor);
+  const placed = new Uint8Array(PIECES.length);
+  const best = (from: number, to: number, out: number[]) => {
+    for (let q = from; q < to; q++) {
+      const base = q * 54;
+      for (let p = 0; p < PIECES.length; p++) {
+        let ok = 1;
+        for (let k = PIECE_AT[p]; k < PIECE_AT[p + 1]; k++) {
+          const j = PIECE_F[k];
+          if (f[PROBES[base + j]] !== SOLVED_CODE[j]) { ok = 0; break; }
+        }
+        placed[p] = ok;
+      }
+      for (let c = 0; c < lists.length; c++) {
+        const l = lists[c];
+        let n = 0;
+        for (let i = 0; i < l.length; i++) n += placed[l[i]];
+        if (n > out[c]) out[c] = n;
+      }
+    }
+    return out;
+  };
+  const now = best(0, 1, candidates.map(() => 0));
+  const one = best(1, N_ONE, now.slice());
+  const two = best(N_ONE, N_PROBES, one.slice());
+  return { now, one, two };
+}
+
+// Lexicographic: within one turn, then within two, then placed now. `now` last
+// is what makes a finished block win: every rival can at best tie it on reach.
+function reachKey(r: PlacementReach, i: number): [number, number, number] {
+  return [r.one[i], r.two[i], r.now[i]];
+}
+function outreaches(a: readonly number[], b: readonly number[]): boolean {
+  for (let j = 0; j < a.length; j++) if (a[j] !== b[j]) return a[j] > b[j];
+  return false;
+}
+function bestReach(r: PlacementReach, preferred: number): number {
+  let best = preferred; // ties go to the preferred placement, then the lowest index
+  for (let i = 0; i < r.now.length; i++) if (outreaches(reachKey(r, i), reachKey(r, best))) best = i;
+  return best;
+}
+
+// The anchor depends only on the step's start state, which every move and
+// render of a step shares — one slot is enough.
+let anchorMemo: { candidates: Cube3x3Mask[]; key: string; pick: number } | null = null;
+
+/** The step-start pick: what activePlacement returns until a candidate out-reaches it. */
+export function anchorPlacement(start: Cube3x3, candidates: Cube3x3Mask[], preferred: number): number {
+  if (candidates.length <= 1) return 0;
+  return anchorFor(start, candidates, Math.min(Math.max(preferred, 0), candidates.length - 1));
+}
+function anchorFor(start: Cube3x3, candidates: Cube3x3Mask[], pref: number): number {
+  const key = `${pref}:${start.encode()}`;
+  if (anchorMemo?.candidates !== candidates || anchorMemo.key !== key) {
+    anchorMemo = { candidates, key, pick: bestReach(placementReach(start, candidates), pref) };
+  }
+  return anchorMemo.pick;
+}
+
 /**
- * The placement the user is currently building. `prev` threads the last pick
- * (null at step start); `preferred` seeds the incumbent before any signal
- * exists. Returns an index into `candidates`.
+ * The placement the user is currently building. `start` is the cube at the
+ * start of the step: its best-reaching candidate is the anchor, which keeps the
+ * job unless another candidate strictly out-reaches it now. `preferred` breaks
+ * ties (the canonical placement today; a user-committed pick once inspection
+ * training exists). Returns an index into `candidates`.
  */
 export function activePlacement(
   cube: Cube3x3,
   candidates: Cube3x3Mask[],
-  prev: number | null,
+  start: Cube3x3,
   preferred: number,
 ): number {
   if (candidates.length <= 1) return 0;
-  const clamp = (i: number) => Math.min(Math.max(i, 0), candidates.length - 1);
-  const incumbent = clamp(prev ?? preferred);
-  const scores = candidates.map((m) => scorePlacement(cube, m));
-  let maxPlaced = 0;
-  for (const s of scores) if (s.placed > maxPlaced) maxPlaced = s.placed;
-  // Hysteresis: the incumbent holds the job unless strictly beaten.
-  if (scores[incumbent].placed >= maxPlaced) return incumbent;
-  let best = -1;
-  for (let i = 0; i < candidates.length; i++) {
-    if (scores[i].placed !== maxPlaced) continue;
-    if (best === -1 || scores[i].matched > scores[best].matched) best = i;
-  }
-  return best;
+  const pref = Math.min(Math.max(preferred, 0), candidates.length - 1);
+  const anchor = anchorFor(start, candidates, pref);
+  const r = placementReach(cube, candidates);
+  const top = bestReach(r, pref);
+  return outreaches(reachKey(r, top), reachKey(r, anchor)) ? top : anchor;
 }

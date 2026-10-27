@@ -42,8 +42,9 @@ pattern vocabulary, curated course, lookahead drill. Eleven harnesses in
 `npm run check`. Highlights:
 
 - **Placement-aware core** (`src/placement.ts` + main wiring): coaching follows
-  the placement the user is building (whole-piece hysteresis pick); completion
-  acceptance unchanged.
+  the placement the user is building; completion acceptance unchanged. (The
+  original whole-piece hysteresis pick was replaced by reach + a step-start
+  anchor on 2026-10-27 — see "Placement pick by reach" under Done.)
 - **Solver finding:** the vendored IDDFS caps at 1e6 visited nodes; pd-4 tables
   made deep 2×2×3 searches return NULL on 11% of real scrambles (and burn up to
   5s). 223 configs now pd5. `idealLen` memoized; null optimal renders '?' and
@@ -413,15 +414,12 @@ Everything from here is behaviour-visible — verify in the browser as well as t
   `undoToScramble`, `enterLearn`'s rewind and the review's "your moves" display, so
   fixing it would shorten real rewind sequences — but it touches a graded-adjacent
   display, so it wants its own change rather than riding along with UI work.
-- On free-placement block trainers the displayed `ideal` can change mid-solve
-  without the cube state changing: four U's are identity, `used` correctly stays 0,
-  but the ideal moved 4→5. Pre-existing placement hysteresis, not the refactor —
-  `b223ext` (single fixed placement) holds steady. Matters because Efficiency
-  scores against `used / ideal`. **Partly addressed** in a separate session (the
-  no-signal half: nothing placed anywhere → anchor to `preferred`); the residual
-  needs a state-derived anchor, which measurably changes which block the coaching
-  follows (6% of 222 moves, 8% of 123, 17.6% of 223) — so it is Ian's call, not a
-  unilateral fix. Hysteresis and path-independence are fundamentally incompatible.
+- ~~On free-placement block trainers the displayed `ideal` can change mid-solve
+  without the cube state changing~~ — **fixed on `placement/lookahead-anchor`
+  (2026-10-27), pending Ian's OK to merge.** See "Placement pick by reach" below.
+  Correction for the record: this bullet used to say the "no-signal half" was
+  addressed in a separate session. It never landed — it sat uncommitted in a
+  worktree — so `main` still had the full drift until this branch.
 - The chip row overflows narrow viewports: at 375px the six Foundations lesson
   chips exceed their row. `.chips` is a non-wrapping flex row (`src/style.css`
   line ~686 — no `flex-wrap`). Isolated by hiding each child of `.col` in turn;
@@ -559,6 +557,70 @@ one is ever genuinely lost.
 
 ---
 
+## Done (2026-10-27) — Placement pick by reach (branch `placement/lookahead-anchor`, not yet merged)
+
+**The problem.** Which block the coaching follows (progress, ideal, hints) was
+picked by *whole pieces placed*, with hysteresis threading the last pick through
+every move. Two faults, measured against simulated human solves whose target is
+known (`scripts/placement-accuracy.ts`):
+- **It was mostly guessing.** Placed counts tie on 70–80% of the states where the
+  user's block is identifiable at all, so late in a solve the pick named the
+  right block only 68% (2×2×2), 56% (1×2×3) and 64% (2×2×3) of the time.
+- **It drifted.** Threading made the pick a fold over the move path: ~19% of no-op
+  excursions (U U U U, a wrong turn undone) handed the job to another block for
+  good and moved the displayed ideal while the cube was unchanged.
+
+**The fix.** Rank candidates by **reach** — most pieces solved within one turn,
+then within two, then now — and keep the step-start pick unless strictly
+out-reached. A pair waiting to be inserted or a block offset by one layer shows
+up in reach while a placed count sees nothing, so ties mostly disappear and
+memory stops being necessary. The pick is a pure function of (start state, live
+state): **no-op drift 0**, by construction and asserted.
+
+| late-solve accuracy | before | after |
+|---|---|---|
+| 2×2×2 (random target / easiest target) | 68% / 74% | 93% / 98% |
+| 1×2×3 (random / easiest) | 56% / 76% | 83% / 91% |
+| 2×2×3 (random) | 64% | 73% |
+
+Visible switches per solve are about the same on 2×2×2 and 1×2×3; on 2×2×3 they
+rise 4.1 → 5.9. **That is the open cost of this design.** I expected the extra
+switches to be churn between "sibling" 2×2×3s sharing an already-built 2×2×2
+(harmless — the coaching barely changes), but only ~0.3 of the extra 1.9 are;
+the rest are real re-aims. A threaded variant cuts them to 5.0 but brings back
+~7% no-op drift, i.e. the old fault. If 2×2×3 feels jumpy in hand, that's where
+to look.
+
+(Table figures come from the exploratory comparison; `placement-accuracy.ts`
+with its own seed reproduces them within a few points: 93.5 / 78.3 / 71.8.)
+
+**Things tried and rejected:** three-turn reach (+1–3 points for ~13× the cost);
+placed-count first with reach as tiebreak (same accuracy, more switches);
+threaded hysteresis on the reach key (fewer switches but 5–8% drift — the old
+fault back); the stranded worktree fix (see Stranded work).
+
+**Cost.** Reach uses facelet permutations read off the engine's own cube at load
+(1 + 18 + 270 probes in one flat table): 0.35–0.75ms per move; measured 2–5ms per
+move including the full re-render on a 1×2×3 step in the dev app. The step-start
+anchor is memoized, and `idealLen`'s memo now keys on the mask in use so the first
+move doesn't redo the 130ms 2×2×3 search.
+
+**Harness.** `placement-check.ts` rewritten for the new contract: reach agrees
+with brute-force engine turning; the pick is the anchor unless strictly
+out-reached; no-ops never move it (asserted at every sampled state, placed pieces
+or not); a finished block is always the pick. Mutation-tested: dropping the
+anchor, the two-turn probes, or reintroducing threaded memory each fail it (129 /
+105 / 795 mismatches). Runtime 58s vs 53s before.
+
+**Behaviour change to know about.** Before the first move, the ideal now refers
+to the step-start pick (the best-reaching block on the scrambled cube), not
+always the canonical placement. Ties still go to the canonical, so on most
+scrambles nothing visible changes. Tap-to-aim pins are unaffected. Grading never
+depended on the pick — it scores the block you actually finished.
+
+**Not verified:** feel on a real cube. The harnesses prove the pick follows the
+simulated solver; whether it follows *Ian's* blockbuilding better needs hands.
+
 ## Remaining — TODO
 
 ### H2 step 5 — `view/` extraction (deferred; NOT a pure move)
@@ -576,14 +638,13 @@ pure move), so left as a deliberate follow-up.
 - A `noUncheckedIndexedAccess` pass (~84 fixes; worthwhile for index-heavy code).
 - `npm audit`: esbuild/vite **dev-server-only** advisory; fix is a Vite major — defer.
 
-### Stranded work — uncommitted, easily lost
-`.claude/worktrees/hungry-shaw-506939` holds **uncommitted** modifications to
-`src/placement.ts` and `scripts/placement-check.ts` — the placement-anchor /
-hysteresis problem — on `claude/hungry-shaw-506939` at `49e9d00`, now **14 commits
-behind `main`**. It survives on disk only; nothing is in git history. It carries the
-open path-independence decision with it (see the second bullet under "Known, not yet
-addressed"), so it wants adjudicating — review, measure against alternatives, then
-land or discard — rather than merging blind. Untouched since 2026-07.
+### Stranded work — adjudicated 2026-10-27, safe to discard
+`.claude/worktrees/hungry-shaw-506939` holds an **uncommitted** placement fix (the
+"no-signal half": anchor to the canonical while nothing is placed). Reviewed and
+measured: it cut no-op drift only from ~19% to ~10–15% and made accuracy slightly
+*worse* (2×2×2 late-solve 68% → 67%, 1×2×3 56% → 55%, 2×2×3 64% → 59%). Superseded
+by `placement/lookahead-anchor`. Nothing in it needs rescuing; the worktree can be
+removed once Ian agrees.
 
 A second worktree, `.claude/worktrees/practical-morse-7ea324`, is clean and on a
 detached HEAD at `a7202de`; nothing to rescue there.

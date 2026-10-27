@@ -204,6 +204,11 @@ the one thing **Hint** charges a rung for. The number lands in the review as
 - **2×2** — build a 2×2×2 corner block **anywhere**. The coaching follows the
   placement you are actually building (progress, ideal count, hints all track
   *your* block, not a prescribed one). Tap a corner sticker to aim explicitly.
+  It reads work in progress, not just finished pieces — a pair waiting to go in,
+  or a block one layer turn out of place, already counts as yours. And it only
+  looks at the cube, never your path to it: a wrong turn undone, or an idle
+  `U U U U`, can't change which block it's following. The same goes for every
+  "anywhere" block trainer below.
 - **2×2×3** — build a 2×2×3 anywhere, any route.
 - **2×2 → 2×2×3** — the scramble pre-builds a 2×2×2; extend it.
 - **1×2×3 L** — a first block against any face (Roux/LEOR).
