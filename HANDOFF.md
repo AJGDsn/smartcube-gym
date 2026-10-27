@@ -621,6 +621,122 @@ depended on the pick — it scores the block you actually finished.
 **Not verified:** feel on a real cube. The harnesses prove the pick follows the
 simulated solver; whether it follows *Ian's* blockbuilding better needs hands.
 
+## Planned (2026-10-27) — Roux first-block course (design, for Ian's review)
+
+Built on teoidus, *Finding an Efficient First Block in Inspection*
+(https://youtu.be/0Cq3YDud1dA) and its hand-drawn flowchart: learn a toolkit of
+first-block approaches, then use inspection to spot which one the scramble favours.
+This is the "1×2×3 Foundations track" from the roadmap. Nothing is built yet.
+
+### Ian's decisions (2026-10-27)
+- **Fixed colour first:** yellow top, red front, so the first block is white/blue
+  on the left. Colour neutrality is a later rung, once that is mastered.
+- **Order:** bottom-up as below; adjust after trying it.
+- **Line + line** gets a full lesson, flagged as a niche technique.
+- **Slice turns must work everywhere**, not just in this course (prerequisite 1).
+
+### Prerequisite 1 — slice and wide turns (blocks every Roux lesson)
+A smart cube only reports outer-face turns, by centre identity: M arrives as R L',
+r as L, u as D, and the next turn is named by whichever centre now sits on that side.
+The app's model keeps its centres fixed, so after one M or r a finished first block
+reads as **not solved, 0/5 pieces placed**. That was measured from a real built block
+(scratchpad probe, 2026-10-27); progress, hints and the ideal all go with it. The
+video's line + line examples use r, u-wide and S', so M, E **and** S all matter.
+
+Proposed rule: judge each target relative to **its own centres**. It counts as solved
+if a whole-cube rotation that leaves those centres in place makes it solved.
+- Side 1×2×3 (one centre): the 4 rotations about its axis, i.e. any M offset.
+- 2×2×2 and 2×2×3 (centres on two or three faces): identity only, so these trainers
+  are unchanged.
+- Centre-less structures (pairs, 3×1 D lines) need their own rule; see prerequisite 2.
+
+The rule goes in ONE shared check used for solved, progress, the block pick, hints
+and the ideal, with an oracle harness at 0 mismatches.
+
+**Scan done (2026-10-27): `scripts/slice-scan.ts`** (a measurement, not in `check`).
+It builds every target from `steps.ts` plus the lesson steps (15 in all), applies 29
+physical slice, wide and arrow turns with the engine's real slice moves, re-holds the
+result with centres home (what the cube reports), and compares the app with the cube
+in hand. Controls (U, R) agree. Today the app is wrong for:
+- **1×2×3 L (`123L`, also course123 and the free drill):** M, M', M2, r, r', r2, M' U.
+  Every sample fails: the block is intact in hand.
+- **Roux second block (`123Rd`):** M, M', M2, M' U. SB drills are all M moves, so this
+  is the worst one.
+- **1×2×3 + EO (`eo123`):** M2, r2. A quarter M changes F/B EO in hand too, so the app
+  is right there.
+- **2×2×1 (lesson):** S, b, and E/u for one of its two placements.
+- **Pair (lesson, no centres):** E, S, u, b and some M/r. *Semantics question for Ian:*
+  is a joined pair that has drifted off its centres still "the pair"? The proposed
+  rule, and the in-hand oracle, say yes.
+- Unaffected: every 2×2×2 and 2×2×3 target, EO, EOLine, EOCross and 2×2×3 + EO,
+  including the arrow M' U M.
+
+The proposed rule matched the cube in hand on **every** row (0 wrong).
+
+**Prior art: cubedex** (github.com/poliva/cubedex, MIT, by the author of our BLE
+library; read at `398add9`, 2026-10-27). In `src/lib/smartcube-parity.ts`:
+- It pairs opposite-face turns arriving within 100 ms into a slice (R L' → M,
+  U D' → E, F' B → S).
+- It then tracks the implied whole-cube rotation and renames later reported faces into
+  the held frame, so a B after an M shows as U.
+- It disables this when the cube's gyro is in use.
+
+That solves cubedex's problem: an alg trainer matching your moves against notation
+written with M. It's a timing heuristic, and it holds back every face turn up to
+100 ms waiting for a partner. For our state-based targets, the rotation-tolerant
+check above is the right tool: it needs no timing, and M versus R L' doesn't matter
+to it. The cubedex idea is worth borrowing for display and notation only: draw the
+net in the held frame, and log M rather than R L'. Relabel the pair retroactively
+when the second turn lands rather than delaying the first.
+
+**EO is already right through M moves.** Ian's case: set up 4 bad edges as the Roux
+"arrow" and flip them with M' U M. The cube reports this as R' L F R L'. It flips 4
+edges in the model's F/B EO and equals the physical state exactly (engine-verified).
+EO measured against the green/blue centres is therefore tracked correctly. The risk is
+only while an M offset is still open, mid-trick: masks that include M-slice centres,
+such as EOLine's, would misread until the closing M.
+
+### Prerequisite 2 — structures that have no centre
+Corner+edge pairs, 3×1 D lines (corner-edge-corner) and disjointed pairs (one move
+from joined) aren't fixed-position masks. They count as "joined correctly to each
+other, wherever they sit", generalising `isPairJoined` (`patterns.ts`) to lines.
+Edge+centre pairs and 3×1 E lines (edge-centre-edge) carry a centre, so they follow
+prerequisite 1. Move counts to a centre-less stage come from solving each placement
+and taking the minimum, as the block pick already does.
+
+### Lessons (Foundations model: observe / guided / coached / independent, same gates)
+Each approach is an ordered list of stages. The app infers which approach you used
+from the stage you complete first, and logs it.
+1. **Recognition:** tap to find edge+centre pairs, corner+edge pairs, 3×1 lines and
+   disjointed pairs on real scrambles. The flowchart's actual skill.
+2. **F2L-style:** DL edge → F2L pair → square → F2L pair. The fallback, ~10–11 moves.
+3. **F2L pair first:** free pair → its DL edge → square → last pair. ~7 moves.
+4. **Line-block square:** D-layer corner+edge + edge+centre → square → last pair
+   (D / u-wide inserts).
+5. **E-line square:** an E-slice edge+centre treated as DL. A colour-neutral
+   reframing, so introduce it gently under the fixed-colour rule.
+6. **Line + line** (niche): 3×1 D line and 3×1 E line in either order, joined with
+   u2. Needs prerequisite 1 on the E axis.
+7. **Inspection drill (the flowchart):** the app detects the flowchart's features
+   (3×1 line block → 3×1 line → corner+edge pair → edge+centre pair → disjointed pair
+   → fallback) and so knows its branch. After the attempt, show your approach, the
+   flowchart's pick and the solver's best per approach.
+
+### Data
+- Seeds: harvest scrambles where each approach is clearly best (per-approach optimal
+  = optimal to the first stage, plus optimal from there to the block), in the style
+  of `scripts/harvest-lessons.ts`. The video's own scrambles (pastebin TnZyxeAJ,
+  three per approach) make credited observe examples, so the learner can watch
+  teoidus solve the same one.
+- Measure the flowchart: how close does following it get to the best block? Also
+  recompute the video's 50-solve frequencies (88% edge+centre pair, 66% corner+edge
+  pair, 96% either) exactly.
+
+### Open
+- Confirm white/blue-left is what "yellow top, red front" means for the first block.
+- Display while an M offset is open: the net is drawn in the model frame, so it
+  differs from the cube in hand until the offset closes.
+
 ## Remaining — TODO
 
 ### H2 step 5 — `view/` extraction (deferred; NOT a pure move)
