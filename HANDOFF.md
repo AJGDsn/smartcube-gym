@@ -673,6 +673,51 @@ in hand. Controls (U, R) agree. Today the app is wrong for:
 
 The proposed rule matched the cube in hand on **every** row (0 wrong).
 
+**Built (2026-10-27): `src/frame.ts`.** Ian's pair call: a joined pair counts
+wherever it sits ("the extra move to put it back is the user's inefficiency").
+- **Judging.** Each target has allowed frames: rotations fixing its own centres,
+  plus keeping F/B on F/B for EO targets. 2×2×2, 2×2×3 and the EO family get only
+  the identity, so their behaviour is unchanged. 1×2×3s and 2×2×1 get 4 frames,
+  1×2×3 + EO gets 2, and the pair gets all 24. These feed completion, scramble
+  rejection (no case that is already solved in some frame), the course-band optimal,
+  the ideal count, grading's optimal (shortest over frames), and the planning
+  verdict's per-placement optima.
+- **Coaching.** The placement pick (`activeFramed`) chooses a candidate *and* a
+  frame. It is still reach + anchor, and frame-0 entries come first, so ties never
+  re-hold. Progress, flash, hints, the lesson coach, lookahead and Learn's
+  segment/role notes all work on the cube re-held in that frame. Results leave
+  through three doors back to the model: moves (`movesFromFrame`), highlights
+  (`faceletToModel`), and pieces (located by colour, so no translation needed). The
+  cube view itself is unchanged: it still draws the model. A pair is complete in any
+  frame, but its coaching stays in frame 0, so hints don't chase whichever rotation
+  happens to line pieces up.
+- **Grading.** Grading replays the user's solve in the frame they finished in, and
+  the taught route in the frame it was planned in. The review shows both in the
+  model's move names.
+- **Guard.** `scripts/frame-check.ts`, now in `npm run check`, checks three things:
+  the renaming and facelet tables against the engine; 960 target verdicts against
+  the cube in hand (15 targets × 32 physical turns); and that the framed pick lands
+  on a solved candidate. It is mutation-tested: the old identity-only rule gives 70
+  mismatches.
+- **Verified in the browser** on `b123L`: build partway, do an M (R L'), and
+  progress holds. Finish, and the step completes with the block a slice turn off the
+  centres. The review's ideal (5) and the user's solve both check out as building
+  the blue–white block.
+- **Not verified:** a real cube in hand.
+- **Behaviour changes worth knowing:**
+  - The 1×2×3 ideal and course bands can be one move shorter, when the identity
+    optimal ended in a turn of the block's own face.
+  - The pick may coach toward a block that is offset from the centres even before
+    any slice turn, if that one strictly out-reaches the others. That's correct for
+    Roux, and it's invisible apart from the route.
+- **Pre-existing, seen while testing:** `humanSolveFromState`'s build-then-extend can
+  emit a cancelling seam (stage 1 ends U', stage 2 starts U → "R' R …" in model
+  names). Not caused by frames; worth its own fix with
+  `human-solve-blocks-check`.
+- **Stage 2, not started:** draw the cube and name moves in the HAND frame
+  (cubedex-style slice pairing, relabelled retroactively), and count a slice as
+  one move where the metric should be STM.
+
 **Prior art: cubedex** (github.com/poliva/cubedex, MIT, by the author of our BLE
 library; read at `398add9`, 2026-10-27). In `src/lib/smartcube-parity.ts`:
 - It pairs opposite-face turns arriving within 100 ms into a slice (R L' → M,

@@ -28,7 +28,11 @@ import {
 } from './steps.ts';
 import { locatePieceNow, nextFocusPiece, nextTwoFocusPieces, pieceDescription, placementName, slotName, targetPieceStates, type FocusPiece } from './pieces.ts';
 import { humanSolveFromState } from './human-solve.ts';
-import { activePlacement, anchorPlacement, canonicalIndexIn, scorePlacement } from './placement.ts';
+import { activeFramed, anchorFramed, canonicalIndexIn } from './placement.ts';
+import {
+  faceletToModel, framedCandidates, inFrame, isTargetSolved, movesFromFrame, movesToFrame,
+  solvedFrame, solveInFrames, type Framed,
+} from './frame.ts';
 import { classifyRoute, isPairJoined, PATTERN_HOW, routeRoles, type MoveRole, type PatternName } from './patterns.ts';
 import { lessonSeedsFor, seedsFor } from './cases.ts';
 import { derivePhase, firstOpenLesson, lessonsFor, successCount, type LessonDef, type LessonPhase } from './lessons.ts';
@@ -71,13 +75,19 @@ function blockPiecesFor(mask: StepDef['canonicalMask']): number[][] {
 }
 
 // --- placement-aware coaching target ---
-// Which of a block step's accepted placements the coaching aims at: the one the
-// user is actually building (re-picked each move into state.placementIdx from
-// the live and step-start states — see placement.ts), else, before the first
-// move, the step-start pick itself. Completion acceptance
-// (solvedStepMask) is unchanged; this only points progress/ideal/hints/Learn at
-// the user's block instead of insisting on bottom-left. EO-family steps never
-// come through here — their targets are axis-aware, handled by their own paths.
+// Which of a step's accepted placements the coaching aims at, and in which
+// FRAME (frame.ts): the one the user is actually building (re-picked each move
+// into state.placementIdx from the live and step-start states — see
+// placement.ts), else, before the first move, the step-start pick itself. This
+// only points progress/ideal/hints/Learn at the user's block instead of insisting
+// on bottom-left; completion accepts every placement in every frame
+// (solvedStepMask). Free EO and 2×2×3+EO never come through here — their targets
+// are axis-aware, handled by their own paths (and allow only the identity frame).
+//
+// The coaching frame is internal. Whatever it computes leaves through one of
+// three doors, each translating back to the model the cube view draws: moves
+// (movesFromFrame), sticker highlights (faceletToModel), and pieces, which are
+// found by colour (locatePieceNow) and so need no translating.
 const canonicalIdxCache = new WeakMap<StepDef, number>();
 function canonicalIdxFor(s: StepDef): number {
   let i = canonicalIdxCache.get(s);
@@ -87,9 +97,25 @@ function canonicalIdxFor(s: StepDef): number {
   }
   return i;
 }
+function framesApply(s: StepDef | null): boolean {
+  return !!s && !isFreeEo(s) && !isBlockEo(s);
+}
+// state.placementIdx indexes framedCandidates(s.candidateMasks), whose first
+// entries are the candidates themselves in frame 0 — so a frame-0 pick (and the
+// tap-to-aim pin) is the plain candidate index, as before frames existed.
+function coachPick(s: StepDef): Framed {
+  const list = framedCandidates(s.candidateMasks);
+  return list[state.placementIdx ?? anchorFramed(state.stepStartCube, list, canonicalIdxFor(s))] ?? list[0];
+}
 function activeMask(s: StepDef): StepDef['canonicalMask'] {
-  if (s.kind !== 'block' || s.candidateMasks.length <= 1) return s.canonicalMask;
-  return s.candidateMasks[state.placementIdx ?? anchorPlacement(state.stepStartCube, s.candidateMasks, canonicalIdxFor(s))];
+  return framesApply(s) ? coachPick(s).mask : s.canonicalMask;
+}
+function coachFrame(s: StepDef | null): number {
+  return s && framesApply(s) ? coachPick(s).frame : 0;
+}
+/** The live cube as the coaching frame sees it. */
+function coachCube(s: StepDef | null): Cube3x3 {
+  return inFrame(state.cube, coachFrame(s));
 }
 
 // Tap-to-aim (2×2×2 family): tapping any sticker of a CORNER cubie names one
@@ -233,7 +259,7 @@ interface State {
   stepStartCube: Cube3x3; // live cube state at the start of the current step (for state-based ideal/scoring)
   movesThisStep: Move3x3[];
   movesThisStepTs: number[]; // Date.now() per movesThisStep move (raw stream — pause/lookahead analysis)
-  placementIdx: number | null; // block steps: the candidate placement coaching aims at (null = the step-start pick)
+  placementIdx: number | null; // the framed candidate coaching aims at — see coachPick (null = the step-start pick)
   placementPinned: boolean; // user tapped a corner to aim — the pick stops second-guessing them
   solveReadyMs: number | null; // when the scramble completed — inspection runs until the first move
   /** Inspection gate: you've pressed Ready and committed to a plan. Per-rep, and
@@ -257,7 +283,8 @@ interface State {
   brokeProtected: boolean; // the prereq block left its solved state at some point this step
   protectedNow: boolean; // the prereq block is currently intact (transition detector)
   identify: { stage: number } | null; // L1 tap-identification: 0 = find the corner, 1 = find an edge
-  assist: { kind: 'nudge' | 'move' | 'ideal'; moves: Move3x3[]; focus: FocusPiece | null; pattern: PatternName | null } | null;
+  // `moves` are in the model's names; `focus.home` is a slot in coaching `frame`.
+  assist: { kind: 'nudge' | 'move' | 'ideal'; moves: Move3x3[]; focus: FocusPiece | null; pattern: PatternName | null; frame?: number } | null;
   /** Lookahead rep: plan the join while predicting z; view is blanked until the
    *  answer tap. z is the second piece the taught route places. */
   predict: { z: FocusPiece; joinDesc: string } | null;
@@ -416,7 +443,7 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
         const scr = genScramble(len);
         last = scr;
         const cube = applyMoves(base, scr);
-        if (first.candidateMasks.some((m) => isMaskSolvedState(cube, m))) continue;
+        if (first.candidateMasks.some((m) => isTargetSolved(cube, m))) continue;
         const taught = humanSolveFromState(cube, first.canonicalMask, first.solver, 16);
         if (!taught) continue;
         const names = classifyRoute(cube, taught, first.canonicalMask).map((e) => e.name);
@@ -433,9 +460,10 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
       const scr = genScramble(len);
       last = scr;
       const cube = applyMoves(base, scr);
-      // Pre-solved in ANY accepted placement (completion accepts every candidate).
-      if (first.candidateMasks.some((m) => isMaskSolvedState(cube, m))) continue;
-      const opt = (solveFromState(cube, first.canonicalMask, cfg) ?? []).length;
+      // Pre-solved in ANY accepted placement and frame (completion accepts them all).
+      if (first.candidateMasks.some((m) => isTargetSolved(cube, m))) continue;
+      // In any frame, as grading measures it — a Roux block finished off-centre is finished.
+      const opt = solveInFrames(cube, first.canonicalMask, cfg)?.moves.length ?? 0;
       const eff = opt === 0 ? 99 : opt; // 0 = deeper than the measure limit
       if (eff >= min && eff <= max) return scr;
     }
@@ -452,11 +480,11 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
   if (first.prereqMask) {
     // 2×2×3+EO pre-builds the rolled orientation's block; its target is colour-identified
     // (isBlockEoSolved), not the static canonical mask. Plain drills reject a case
-    // pre-solved in ANY accepted placement (completion accepts every candidate —
+    // pre-solved in ANY accepted placement or frame (completion accepts them all —
     // e.g. either 2×2×1 square containing the pre-built pair).
     const beo = isBlockEo(first);
     const prereq = beo ? blockEoPrereq(blockEoOrient) : first.prereqMask;
-    const targetDone = (c: Cube3x3) => beo ? isBlockEoSolved(c, blockEoOrient) : first.candidateMasks.some((m) => isMaskSolvedState(c, m));
+    const targetDone = (c: Cube3x3) => beo ? isBlockEoSolved(c, blockEoOrient) : first.candidateMasks.some((m) => isTargetSolved(c, m));
     const buildCfg = { ...first.solver, depthLimit: 16 };
     // Foundations difficulty cap: try for a case within the lesson's optimal
     // ceiling for half the budget, then accept any valid case — never stall.
@@ -470,7 +498,7 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
       const cube = applyMoves(base, full);
       if (!isMaskSolvedState(cube, prereq) || targetDone(cube)) continue;
       if (lessonGen?.maxOptimal != null && attempt < 10) {
-        const opt = solveFromState(cube, first.canonicalMask, first.solver)?.length ?? 99;
+        const opt = solveInFrames(cube, first.canonicalMask, first.solver)?.moves.length ?? 99;
         if (opt > lessonGen.maxOptimal) { fallback = full; continue; }
       }
       return full;
@@ -504,7 +532,7 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
     return simplifyMoves([...genEoSafeScramble(need), ...eoSeq]);
   }
   // Blocks: a normal-length random scramble, rejecting any that pre-solve the
-  // step in ANY accepted placement — completion accepts every candidate, so a
+  // step in ANY accepted placement or frame — completion accepts every candidate, so a
   // scramble that leaves some other 2×2×2 built would be a degenerate solve.
   // Checked state-based from the actual base, so it's right after a resync too.
   // Foundations lessons may shorten the scramble and cap the optimal (small
@@ -519,7 +547,7 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
     const moves = genScramble(len);
     lastBlock = moves;
     const cube = applyMoves(base, moves);
-    if (first.candidateMasks.some((m) => isMaskSolvedState(cube, m))) continue;
+    if (first.candidateMasks.some((m) => isTargetSolved(cube, m))) continue;
     if (wantPatterns) {
       const taught = humanSolveFromState(cube, first.canonicalMask, first.solver, 16);
       if (!taught) continue;
@@ -528,7 +556,7 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
       return moves;
     }
     if (lessonGen?.maxOptimal != null && attempt < 15) {
-      const opt = solveFromState(cube, first.canonicalMask, first.solver)?.length ?? 99;
+      const opt = solveInFrames(cube, first.canonicalMask, first.solver)?.moves.length ?? 99;
       if (opt > lessonGen.maxOptimal) continue;
     }
     return moves;
@@ -790,13 +818,14 @@ function afterChange() {
     // building (anchored on the step's start state, so it is stable and a no-op
     // can't move it) BEFORE progress/flash/completion read it — everything
     // downstream this move sees one consistent target.
-    if (s && s.kind === 'block' && s.candidateMasks.length > 1 && !state.placementPinned) {
-      state.placementIdx = activePlacement(state.cube, s.candidateMasks, state.stepStartCube, canonicalIdxFor(s));
+    // The pick also chooses the frame, so a slice turn re-holds the coaching.
+    if (s && framesApply(s) && framedCandidates(s.candidateMasks).length > 1 && !state.placementPinned) {
+      state.placementIdx = activeFramed(state.cube, framedCandidates(s.candidateMasks), state.stepStartCube, canonicalIdxFor(s));
     }
     // Flash when a piece is placed / edge oriented (within the same step).
     if (s) {
       const key = `${state.trainerId}:${state.stepIndex}:${state.scrambleBaseLen}`;
-      const u = placedUnits(state.cube, s);
+      const u = placedUnits(coachCube(s), s);
       if (key === lastFlashKey && u > lastUnits) flashPieces();
       lastFlashKey = key;
       lastUnits = u;
@@ -809,15 +838,17 @@ function afterChange() {
   }
 }
 
-// The placement that counts as completing this step, or null if not yet done.
-// Accepts ANY configured candidate placement (e.g. any of the 2×2×2 corner
-// blocks), not just the canonical one — building a valid block anywhere is
-// success. Prefers the canonical placement when it's the solved one, so
-// single-candidate steps (EO, drills) behave exactly as before.
-function solvedStepMask(s: StepDef) {
-  if (isMaskSolvedState(state.cube, s.canonicalMask)) return s.canonicalMask;
-  for (const m of s.candidateMasks) {
-    if (isMaskSolvedState(state.cube, m)) return m;
+// The placement that counts as completing this step, and the frame it is
+// solved in, or null if not yet done. Accepts ANY configured candidate placement
+// (e.g. any of the 2×2×2 corner blocks), not just the canonical one — building a
+// valid block anywhere is success — in any of its frames (frame.ts: a Roux block
+// left a slice turn off the centres is finished). Prefers the canonical
+// placement when it's the solved one, so single-candidate steps behave exactly
+// as before.
+function solvedStepMask(s: StepDef): { mask: StepDef['canonicalMask']; frame: number } | null {
+  for (const mask of [s.canonicalMask, ...s.candidateMasks]) {
+    const frame = solvedFrame(state.cube, mask);
+    if (frame >= 0) return { mask, frame };
   }
   return null;
 }
@@ -868,22 +899,32 @@ function checkStepCompletion() {
     // is display-only). Block steps score against the placement actually completed
     // (any valid 2×2×2 etc.), so a non-canonical block is judged against its own
     // optimal rather than the canonical one.
-    const solvedMask = solvedStepMask(s) ?? s.canonicalMask;
+    //
+    // Frames: the block is judged in whichever frame it is closest to from the
+    // start (solveInFrames), and everything that replays the solve — the case
+    // label and the pattern tags — works in that frame on the re-held start, with
+    // the user's moves renamed into it. Only the moves the review SHOWS go back to
+    // the model's names. In frame 0 all of this is exactly the old computation.
+    const done = solvedStepMask(s);
+    const solvedMask = done?.mask ?? s.canonicalMask;
+    const framed = isBlockEo(s) || isFreeEo(s) ? null : solveInFrames(state.stepStartCube, solvedMask, s.solver);
+    const gf = framed?.frame ?? 0;
+    const gStart = inFrame(state.stepStartCube, gf);
     const optimalArr = isBlockEo(s)
       ? solveFromState(state.stepStartCube, blockEoTarget(state.blockEoOrient), s.solver)
       : isFreeEo(s)
       ? solveFromState(state.stepStartCube, eoMaskForStep(s, state.eoAxis), s.solver)
-      : solveFromState(state.stepStartCube, solvedMask, s.solver);
+      : framed?.moves ?? null;
     const optimal = optimalArr ?? [];
     const used = htmCount(state.movesThisStep);
-    const caseLabel = classifyCase(state.stepStartCube, s, optimal, solvedMask);
+    const caseLabel = classifyCase(gStart, s, optimal, solvedMask);
     state.lastResult = {
       step: s.label,
       used,
       // A (rare) solver failure has no trustworthy optimal — null renders '?'.
       optimal: optimalArr ? optimalArr.length : null,
       yourMoves: [...state.movesThisStep],
-      idealMoves: optimal,
+      idealMoves: movesFromFrame(optimal, gf),
       case: optimalArr ? caseLabel : undefined,
     };
     // Free-EO: record both axes' optimal length + bad-edge count so the review can
@@ -903,7 +944,7 @@ function checkStepCompletion() {
       let bestLen = Infinity;
       let bestIdx = -1;
       for (let i = 0; i < s.candidateMasks.length; i++) {
-        const l = solveFromState(state.stepStartCube, s.candidateMasks[i], s.solver)?.length;
+        const l = solveInFrames(state.stepStartCube, s.candidateMasks[i], s.solver)?.moves.length;
         if (l != null && l < bestLen) { bestLen = l; bestIdx = i; }
       }
       if (bestIdx >= 0) {
@@ -924,10 +965,15 @@ function checkStepCompletion() {
     // Named-pattern tags: what the TAUGHT route (the one Learn walks) uses,
     // and what the user's own HTM-simplified solve actually did.
     if (s.kind === 'block' && optimalArr) {
-      const taught = humanSolveFromState(state.stepStartCube, solvedMask, s.solver) ?? optimalArr;
+      const taught = humanSolveFromState(gStart, solvedMask, s.solver) ?? optimalArr;
       const names = (rt: Move3x3[]) =>
-        classifyRoute(state.stepStartCube, rt, solvedMask).map((e) => e.name).filter((x): x is PatternName => x != null);
-      state.lastResult.patterns = { ideal: names(taught), yours: names(simplifyMoves(state.movesThisStep)) };
+        classifyRoute(gStart, rt, solvedMask).map((e) => e.name).filter((x): x is PatternName => x != null);
+      // Your solve is replayed in the frame you finished in; the taught route in
+      // the frame it was planned in.
+      const df = done?.frame ?? 0;
+      const yours = classifyRoute(inFrame(state.stepStartCube, df), movesToFrame(simplifyMoves(state.movesThisStep), df), solvedMask)
+        .map((e) => e.name).filter((x): x is PatternName => x != null);
+      state.lastResult.patterns = { ideal: names(taught), yours };
     }
     // Log to the Stats history. Record solve time only for single-step trainers
     // (EO / course / drills) — the journey timer isn't per-step meaningful. On a
@@ -960,7 +1006,7 @@ function checkStepCompletion() {
         state.status = `Example done — that was a ${state.courseSeedTag}. Next for more of the lesson.`;
       } else if (lessonsFor(tr.id)) {
         // Foundations: proficiency gates, not the graded-course window.
-        recordFoundationsRep(s, solvedMask, optimalArr);
+        recordFoundationsRep(s, solvedMask, optimalArr, gStart);
       }
     }
     if (state.stepIndex < steps().length - 1) {
@@ -1287,8 +1333,11 @@ function makeLearnState(base: Cube3x3, s: StepDef, rebased: boolean): NonNullabl
   let roles: MoveRole[] | undefined;
   if (s.kind === 'block') {
     const mask = activeMask(s);
-    seg = classifyRoute(base, ideal, mask).map((e) => ({ name: e.name, from: e.from, to: e.to }));
-    roles = routeRoles(base, ideal, mask);
+    const frame = coachFrame(s);
+    const fBase = inFrame(base, frame);
+    const fIdeal = movesToFrame(ideal, frame);
+    seg = classifyRoute(fBase, fIdeal, mask).map((e) => ({ name: e.name, from: e.from, to: e.to }));
+    roles = routeRoles(fBase, fIdeal, mask);
   }
   return { moves: ideal, base, baseLen: state.history.length, seg, roles, rebased };
 }
@@ -1502,7 +1551,12 @@ function orientedEdges(cube: Cube3x3, s: StepDef): number {
 function idealRoute(start: Cube3x3, s: StepDef): Move3x3[] {
   if (isBlockEo(s)) return humanSolveFromState(start, blockEoTarget(state.blockEoOrient), s.solver) ?? [];
   if (isFreeEo(s)) return humanSolveFromState(start, eoMaskForStep(s, state.eoAxis), s.solver) ?? [];
-  return humanSolveFromState(start, activeMask(s), s.solver) ?? [];
+  return movesFromFrame(coachRoute(start, s), coachFrame(s));
+}
+/** The same teaching route in the COACHING frame's names, from `start` re-held
+ *  in that frame — what piece and pattern analysis must replay it against. */
+function coachRoute(start: Cube3x3, s: StepDef): Move3x3[] {
+  return humanSolveFromState(inFrame(start, coachFrame(s)), activeMask(s), s.solver) ?? [];
 }
 // idealFromStart runs on every render and a deep 2×2×3 search costs ~130ms even
 // at pd5, so the block-step result is memoized by (step, placement, start state)
@@ -1517,7 +1571,8 @@ function idealLen(start: Cube3x3, s: StepDef): number | null {
   // pick) and that same pick's index must share one 130ms search.
   const key = `${s.id}:${s.candidateMasks.indexOf(mask)}:${start.encode()}`;
   if (idealMemo?.key !== key) {
-    idealMemo = { key, len: solveFromState(start, mask, s.solver)?.length ?? null };
+    // Shortest over the target's frames — the same measure grading uses.
+    idealMemo = { key, len: solveInFrames(start, mask, s.solver)?.moves.length ?? null };
   }
   return idealMemo.len;
 }
@@ -1605,8 +1660,8 @@ function startPredict() {
   // Only from plain solving: starting a lookahead rep on top of a walkthrough or
   // another prompt would give two phases a claim on the same sticker taps.
   if (!s || s.kind !== 'block' || repPhase() !== 'solve') return;
-  const route = continuation();
-  const two = route.length ? nextTwoFocusPieces(state.cube, activeMask(s), route) : null;
+  const route = coachRoute(state.cube, s);
+  const two = route.length ? nextTwoFocusPieces(coachCube(s), activeMask(s), route) : null;
   if (!two) { state.status = 'Nothing to look ahead to — fewer than two pieces left.'; render(); return; }
   state.assist = null;
   state.predict = { z: two.second, joinDesc: two.first.description };
@@ -1663,9 +1718,11 @@ function survivingAssist(): State['assist'] {
   // EO nudges carry no focus piece — buildCubePanel recomputes the misoriented
   // edges from the live state each render, so they stay true for free.
   if (!a.focus) return a;
-  const current = locatePieceNow(state.cube, a.focus.home);
-  if (current.join() === a.focus.home.join()) return null; // placed — the advice is spent
-  return { ...a, focus: { ...a.focus, current } };
+  // `home` is a slot in the frame the hint was given in; the piece is found by
+  // colour, so locating it in the model gives the stickers the view draws.
+  const home = a.focus.home;
+  if (locatePieceNow(inFrame(state.cube, a.frame ?? 0), home).join() === home.join()) return null; // placed — the advice is spent
+  return { ...a, focus: { ...a.focus, current: locatePieceNow(state.cube, home) } };
 }
 
 function assist(kind: 'nudge' | 'move' | 'ideal') {
@@ -1682,14 +1739,19 @@ function assist(kind: 'nudge' | 'move' | 'ideal') {
   }
   const moves = continuation();
   if (moves.length === 0) { state.assist = null; state.status = 'Nothing to suggest from here.'; render(); return; }
-  const focus = kind !== 'ideal' && s.kind === 'block' ? nextFocusPiece(state.cube, activeMask(s), moves) : null;
+  // Piece and pattern analysis replay the route in the coaching frame.
+  const frame = coachFrame(s);
+  const fCube = inFrame(state.cube, frame);
+  const fMoves = movesToFrame(moves, frame);
+  const found = kind !== 'ideal' && s.kind === 'block' ? nextFocusPiece(fCube, activeMask(s), fMoves) : null;
+  const focus = found && { ...found, current: locatePieceNow(state.cube, found.home) };
   // Name the pattern the taught route is about to use (its first segment) — the
   // Lars Petrus vocabulary the coaching teaches.
   const pattern = s.kind === 'block'
-    ? classifyRoute(state.cube, moves, activeMask(s)).find((e) => e.name)?.name ?? null
+    ? classifyRoute(fCube, fMoves, activeMask(s)).find((e) => e.name)?.name ?? null
     : null;
   const effective = kind === 'nudge' && !focus ? 'move' : kind;
-  state.assist = { kind: effective, moves, focus, pattern };
+  state.assist = { kind: effective, moves, focus, pattern, frame };
   state.helpUsed = Math.max(state.helpUsed, effective === 'nudge' ? 1 : effective === 'move' ? 2 : 3);
   state.status =
     effective === 'nudge' ? `Hint: focus on the ${focus?.description ?? 'highlighted piece'} — pair and insert it.`
@@ -1731,7 +1793,7 @@ function startLessonSolve() {
     }
     state.status = `Guided: ${def.outcome}`;
   } else if (phase === 'coached') {
-    const f = nextFocusPiece(state.cube, activeMask(s), continuation());
+    const f = nextFocusPiece(coachCube(s), activeMask(s), coachRoute(state.cube, s));
     state.status = f ? `Coached: look for the ${f.description} first.` : `Coached: ${def.outcome}`;
   }
   // independent / done: the generic "Scrambled!" status stands.
@@ -1801,8 +1863,7 @@ function lessonLiveCoach(s: StepDef) {
   if (!def || state.learn || state.stepDone[state.stepIndex]) return;
   let protectedMsg: string | null = null;
   if (s.prereqMask) {
-    const sc = scorePlacement(state.cube, s.prereqMask);
-    const ok = sc.placed === sc.total;
+    const ok = isTargetSolved(state.cube, s.prereqMask);
     if (!ok && state.protectedNow) {
       state.brokeProtected = true;
       protectedMsg = 'Careful — the built block broke. Rebuild it before adding more.';
@@ -1813,12 +1874,13 @@ function lessonLiveCoach(s: StepDef) {
   }
   const mask = activeMask(s);
   const pieces = blockPiecesFor(mask);
-  const f = faceletString(state.cube);
+  const cube = coachCube(s);
+  const f = faceletString(cube);
   const placedNow = pieces.filter((g) => g.every((i) => f[i] === SOLVED_STR[i]));
   const placedKeys = placedNow.map((g) => NET_COORDS[g[0]].join(','));
   const corner = pieces.find((g) => g.length === 3) ?? null;
   const edges = pieces.filter((g) => g.length === 2);
-  const joined = corner != null && edges.some((e) => isPairJoined(state.cube.stateData, corner, e));
+  const joined = corner != null && edges.some((e) => isPairJoined(cube.stateData, corner, e));
   const key = `${state.trainerId}:${state.stepIndex}:${state.scrambleBaseLen}`;
   const sameRep = key === lcKey;
   const prevPlaced = lcPlacedKeys;
@@ -1903,12 +1965,13 @@ function answerIdentify(viewIdx: number) {
 // target completed without the full route being revealed (helpUsed < 3);
 // Hint and Next move are allowed in every phase. Phase/lesson transitions
 // speak here; the lesson summary rides on lastResult for the beginner review.
-function recordFoundationsRep(s: StepDef, solvedMask: StepDef['canonicalMask'], optimalArr: Move3x3[]) {
+// `start` is the step start re-held in the frame `optimalArr` was planned in.
+function recordFoundationsRep(s: StepDef, solvedMask: StepDef['canonicalMask'], optimalArr: Move3x3[], start: Cube3x3) {
   const def = activeLessonDef();
   if (!def || !state.lastResult) return;
   const seeds = lessonSeedsFor(def.id);
   // The "next visual decision" for the review: the first piece the route places.
-  const focusNext = nextFocusPiece(state.stepStartCube, solvedMask, optimalArr)?.description;
+  const focusNext = nextFocusPiece(start, solvedMask, optimalArr)?.description;
   if (state.lessonRep?.example) {
     state.lastResult.lesson = { example: true, hadPrereq: !!s.prereqMask, focusNext };
     state.status = 'Example done — Next serves a case for you to try the same idea.';
@@ -1950,7 +2013,7 @@ let statusTimer: number | undefined;
 
 function render() {
   const s = currentStep();
-  const info = s ? progressInfo(state.cube, s) : { frac: 1, pct: 100, caption: '' };
+  const info = s ? progressInfo(coachCube(s), s) : { frac: 1, pct: 100, caption: '' };
   const phase = repPhase();
   document.documentElement.dataset.theme = resolveTheme(getTheme());
 
@@ -2246,7 +2309,11 @@ function buildCubePanel(s: StepDef | null): HTMLElement {
   let highlight: Set<number> | null = null;
   let note = '';
   if (state.assist) {
-    if (state.assist.kind === 'ideal') { highlight = new Set(activeMask(s!).solvedFaceletIndices); note = 'highlighted: the target facelets'; }
+    if (state.assist.kind === 'ideal') {
+      const frame = coachFrame(s);
+      highlight = new Set(activeMask(s!).solvedFaceletIndices.map((j) => faceletToModel(j, frame)));
+      note = 'highlighted: the target facelets';
+    }
     else if (state.assist.kind === 'nudge' && s?.kind === 'eo') {
       // Bad-edge stickers are model-frame (computed without rotating the state),
       // so they go through the same rotateHighlight as every other highlight.

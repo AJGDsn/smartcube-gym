@@ -23,6 +23,12 @@
 // fold over the move path: about one no-op excursion in five handed the job to
 // a different block for good and moved the displayed ideal under the user.
 //
+// Candidates can also be FRAMED (frame.ts): the same mask judged with the cube
+// re-held, so a Roux block left a slice turn off the centres is still the block
+// being built. A frame is a fixed relabeling of the facelets, so reach in a frame
+// is reach on the permuted state; frame-0 entries come first, and ties go to the
+// lowest index, so the pick only re-holds the cube when that strictly out-reaches.
+//
 // Pure geometry over the live cube state — no app state, no solver calls.
 // Guarded by scripts/placement-check.ts (reach agrees with turning the engine's
 // own cube; the pick is the anchor unless strictly out-reached; no-op sequences
@@ -30,6 +36,7 @@
 
 import { Cube3x3, MOVESETS, SOLVED_FACELET_CUBE, type Cube3x3Mask, type Move3x3 } from './engine-api.ts';
 import { NET_COORDS } from './blocks.ts';
+import { frame0Candidates, framePerm, type Framed } from './frame.ts';
 
 // Facelets grouped into movable cubies (pieces): coordinate groups with more
 // than one facelet. Centres are fixed and carry no placement signal.
@@ -129,8 +136,28 @@ export interface PlacementReach {
 
 /** Per-candidate reach: ~0.2ms for 24 candidates, cheap enough for every move. */
 export function placementReach(cube: Cube3x3, candidates: Cube3x3Mask[]): PlacementReach {
-  const f = Uint16Array.from(cube.stateData as readonly string[], (x) => x.charCodeAt(0));
-  const lists = candidates.map(pieceIdxFor);
+  return reachOf(codesOf(cube), candidates.map(pieceIdxFor));
+}
+
+/** Reach per framed candidate: each frame's candidates on the re-held state. */
+export function framedReach(cube: Cube3x3, framed: readonly Framed[]): PlacementReach {
+  const base = codesOf(cube);
+  const out: PlacementReach = { now: framed.map(() => 0), one: framed.map(() => 0), two: framed.map(() => 0) };
+  for (const frame of new Set(framed.map((c) => c.frame))) {
+    const at = framed.flatMap((c, i) => (c.frame === frame ? [i] : []));
+    const perm = framePerm(frame);
+    const codes = frame === 0 ? base : Uint16Array.from(perm, (j) => base[j]);
+    const r = reachOf(codes, at.map((i) => pieceIdxFor(framed[i].mask)));
+    at.forEach((i, k) => { out.now[i] = r.now[k]; out.one[i] = r.one[k]; out.two[i] = r.two[k]; });
+  }
+  return out;
+}
+
+function codesOf(cube: Cube3x3): Uint16Array {
+  return Uint16Array.from(cube.stateData as readonly string[], (x) => x.charCodeAt(0));
+}
+
+function reachOf(f: Uint16Array, lists: number[][]): PlacementReach {
   const placed = new Uint8Array(PIECES.length);
   const best = (from: number, to: number, out: number[]) => {
     for (let q = from; q < to; q++) {
@@ -152,7 +179,7 @@ export function placementReach(cube: Cube3x3, candidates: Cube3x3Mask[]): Placem
     }
     return out;
   };
-  const now = best(0, 1, candidates.map(() => 0));
+  const now = best(0, 1, lists.map(() => 0));
   const one = best(1, N_ONE, now.slice());
   const two = best(N_ONE, N_PROBES, one.slice());
   return { now, one, two };
@@ -175,17 +202,21 @@ function bestReach(r: PlacementReach, preferred: number): number {
 
 // The anchor depends only on the step's start state, which every move and
 // render of a step shares — one slot is enough.
-let anchorMemo: { candidates: Cube3x3Mask[]; key: string; pick: number } | null = null;
+let anchorMemo: { framed: readonly Framed[]; key: string; pick: number } | null = null;
 
 /** The step-start pick: what activePlacement returns until a candidate out-reaches it. */
 export function anchorPlacement(start: Cube3x3, candidates: Cube3x3Mask[], preferred: number): number {
-  if (candidates.length <= 1) return 0;
-  return anchorFor(start, candidates, Math.min(Math.max(preferred, 0), candidates.length - 1));
+  return anchorFramed(start, frame0Candidates(candidates), preferred);
 }
-function anchorFor(start: Cube3x3, candidates: Cube3x3Mask[], pref: number): number {
+/** anchorPlacement over framed candidates; returns an index into `framed`. */
+export function anchorFramed(start: Cube3x3, framed: readonly Framed[], preferred: number): number {
+  if (framed.length <= 1) return 0;
+  return anchorFor(start, framed, Math.min(Math.max(preferred, 0), framed.length - 1));
+}
+function anchorFor(start: Cube3x3, framed: readonly Framed[], pref: number): number {
   const key = `${pref}:${start.encode()}`;
-  if (anchorMemo?.candidates !== candidates || anchorMemo.key !== key) {
-    anchorMemo = { candidates, key, pick: bestReach(placementReach(start, candidates), pref) };
+  if (anchorMemo?.framed !== framed || anchorMemo.key !== key) {
+    anchorMemo = { framed, key, pick: bestReach(framedReach(start, framed), pref) };
   }
   return anchorMemo.pick;
 }
@@ -203,10 +234,14 @@ export function activePlacement(
   start: Cube3x3,
   preferred: number,
 ): number {
-  if (candidates.length <= 1) return 0;
-  const pref = Math.min(Math.max(preferred, 0), candidates.length - 1);
-  const anchor = anchorFor(start, candidates, pref);
-  const r = placementReach(cube, candidates);
+  return activeFramed(cube, frame0Candidates(candidates), start, preferred);
+}
+/** activePlacement over framed candidates; returns an index into `framed`. */
+export function activeFramed(cube: Cube3x3, framed: readonly Framed[], start: Cube3x3, preferred: number): number {
+  if (framed.length <= 1) return 0;
+  const pref = Math.min(Math.max(preferred, 0), framed.length - 1);
+  const anchor = anchorFor(start, framed, pref);
+  const r = framedReach(cube, framed);
   const top = bestReach(r, pref);
   return outreaches(reachKey(r, top), reachKey(r, anchor)) ? top : anchor;
 }
