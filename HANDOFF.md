@@ -416,7 +416,7 @@ Everything from here is behaviour-visible — verify in the browser as well as t
   display, so it wants its own change rather than riding along with UI work.
 - ~~On free-placement block trainers the displayed `ideal` can change mid-solve
   without the cube state changing~~ — **fixed 2026-10-27 (`b487388`).** See
-  "Placement pick by reach" above.
+  "Placement pick by reach" below.
   Correction for the record: this bullet used to say the "no-signal half" was
   addressed in a separate session. It never landed — it sat uncommitted in a
   worktree — so `main` still had the full drift until this branch.
