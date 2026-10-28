@@ -634,6 +634,47 @@ This is the "1×2×3 Foundations track" from the roadmap. Nothing is built yet.
 - **Order:** bottom-up as below; adjust after trying it.
 - **Line + line** gets a full lesson, flagged as a niche technique.
 - **Slice turns must work everywhere**, not just in this course (prerequisite 1).
+- **Fold in the learner review (2026-10-28):** Ian accepted the changes below.
+
+### Learner review (2026-10-28) — what the design was missing
+Reviewed from the seat of the course's real audience: someone who knows Roux basics,
+solves in about a minute and builds the first block as "DL edge + 2 F2L pairs". The
+content (toolkit, order, video as the source) was right; what the plan lacked was
+pressure to *change*: fewer moves, planning in inspection, and turning like a Roux
+solver. Without these, that learner passes every lesson with the habit they came in
+with. Folded into the sections below:
+1. **Routes must move like Roux** → prerequisite 3. The block solver uses outer turns
+   only (`BLOCK_MOVES = MOVESETS.RUFLDB`, `steps.ts`), so every route, observe example
+   and walkthrough avoids M and r — teaching the F2L habits the course exists to
+   replace.
+2. **The screen must match the hands** → stage 2 of prerequisite 1 is now a
+   prerequisite of the course, not polish. Guided phases narrate move by move; after
+   one M, "B" means the learner's top face and they are lost on the first slice.
+3. **Gate on approach and efficiency, not completion.** Foundations counts any
+   completion with helpUsed < 3 and logs move counts without gating (`lessons.ts`).
+   This learner can already build a first block, so each lesson also gates on (a) the
+   inferred approach being the lesson's own, and (b) moves within N of that
+   approach's best for the scramble (N per lesson, tuned in hand).
+4. **Plan in every lesson, not only at the end.** The inspection gate is on from the
+   coached phase onwards: plan at least stage 1 before turning (the square once
+   independent), record inspection time with an optional 15 s limit, and flag pauses
+   mid-solve.
+5. **Lesson 2 becomes a placement test.** F2L-style is what the learner already does,
+   probably inefficiently; a full four-phase lesson (11+ reps) is a chore. Instead:
+   five scrambles that measure moves and inspection against the best possible (the
+   learner's baseline, kept for later comparison), then a few refinement reps on the
+   efficient version (DL edge in ≤ 2 moves, pairs inserted with r/M, no rotations).
+6. **Recognition includes counting.** Inspection asks "which feature is closest and
+   is it the best start?", not just "is there one?". The recognition lesson asks for
+   the best feature and an estimated move count, then shows the true count.
+7. **Every review shows the best route per approach**, not only lesson 7's: "you took
+   11; pair-first did it in 7" is what changes habits.
+8. **Finish into the second block.** A closing rep: first block then straight into
+   SB without stopping (builds on `b123R`), since the FB→SB transition is where a
+   sub-minute solver loses time.
+9. **Honest frequencies.** The video's 88% / 66% / 96% probably assume some colour
+   neutrality. With only the white–blue block, the fallback branch fires more often;
+   the flowchart measurement reports fixed-colour numbers.
 
 ### Prerequisite 1 — slice and wide turns (blocks every Roux lesson)
 A smart cube only reports outer-face turns, by centre identity: M arrives as R L',
@@ -714,9 +755,10 @@ wherever it sits ("the extra move to put it back is the user's inefficiency").
   emit a cancelling seam (stage 1 ends U', stage 2 starts U → "R' R …" in model
   names). Not caused by frames; worth its own fix with
   `human-solve-blocks-check`.
-- **Stage 2, not started:** draw the cube and name moves in the HAND frame
-  (cubedex-style slice pairing, relabelled retroactively), and count a slice as
-  one move where the metric should be STM.
+- **Stage 2, not started — now a course prerequisite** (learner review, item 2):
+  draw the cube and name moves in the HAND frame (cubedex-style slice pairing,
+  relabelled retroactively), and count a slice as one move where the metric should
+  be STM. Without it, guided narration is unreadable after the first M.
 
 **Prior art: cubedex** (github.com/poliva/cubedex, MIT, by the author of our BLE
 library; read at `398add9`, 2026-10-27). In `src/lib/smartcube-parity.ts`:
@@ -749,12 +791,37 @@ Edge+centre pairs and 3×1 E lines (edge-centre-edge) carry a centre, so they fo
 prerequisite 1. Move counts to a centre-less stage come from solving each placement
 and taking the minimum, as the block pick already does.
 
-### Lessons (Foundations model: observe / guided / coached / independent, same gates)
+### Prerequisite 3 — routes that move like Roux (learner review, item 1)
+Routes, observe examples, walkthroughs and the per-approach "best" must be allowed M
+and r (and count them in STM, with stage 2), or the course teaches outer-turn F2L
+habits. Work involved:
+- A Roux move set for the 1×2×3 family (outer turns + M + r at least; E/S/u only if
+  line + line needs them). Check what the engine's `MOVESETS` offers and the pruning
+  cost at the current depths; `src/engine/` stays untouched.
+- Solver output then contains slices, but the model only ever sees outer turns. Any
+  comparison of a learner's moves against a route (grading, guided "next move",
+  lookahead) must compare in one vocabulary: either pair the learner's R L' into M
+  (stage 2) or expand the route's M into R L' plus a frame change.
+- Move counts: ideal, course bands and the new efficiency gate switch to STM for this
+  family, so a slice the learner makes costs one move, like the route's.
+- Guard: extend `frame-check` (or a new harness) so slice-bearing routes, applied as
+  the cube reports them, still complete the target.
+
+### Lessons (Foundations model: observe / guided / coached / independent)
 Each approach is an ordered list of stages. The app infers which approach you used
-from the stage you complete first, and logs it.
+from the stage you complete first, and logs it. **Gates differ from Foundations**
+(learner review, items 3–4): a success needs the lesson's own approach AND a move
+count within N of that approach's best; the inspection gate is on from coached
+onwards; every review shows the best route per approach (item 7).
 1. **Recognition:** tap to find edge+centre pairs, corner+edge pairs, 3×1 lines and
-   disjointed pairs on real scrambles. The flowchart's actual skill.
-2. **F2L-style:** DL edge → F2L pair → square → F2L pair. The fallback, ~10–11 moves.
+   disjointed pairs on real scrambles — then pick the best starting feature and
+   estimate its move count; the app shows the true count. The flowchart's actual
+   skill.
+2. **Placement test + refinement (was "F2L-style"):** DL edge → F2L pair → square →
+   F2L pair, the fallback, ~10–11 moves at best. Five scrambles measure the learner's
+   moves and inspection against the best (stored as their baseline), then a few
+   refinement reps on the efficient version: DL edge in ≤ 2 moves, pairs inserted with
+   r/M, no rotations. Short, not a full four-phase lesson.
 3. **F2L pair first:** free pair → its DL edge → square → last pair. ~7 moves.
 4. **Line-block square:** D-layer corner+edge + edge+centre → square → last pair
    (D / u-wide inserts).
@@ -765,7 +832,10 @@ from the stage you complete first, and logs it.
 7. **Inspection drill (the flowchart):** the app detects the flowchart's features
    (3×1 line block → 3×1 line → corner+edge pair → edge+centre pair → disjointed pair
    → fallback) and so knows its branch. After the attempt, show your approach, the
-   flowchart's pick and the solver's best per approach.
+   flowchart's pick and the solver's best per approach. Compare against the lesson 2
+   baseline.
+8. **Into the second block:** first block, then straight into SB without stopping
+   (built on `b123R`'s target). Grades the transition pause as well as both blocks.
 
 ### Data
 - Seeds: harvest scrambles where each approach is clearly best (per-approach optimal
@@ -775,12 +845,17 @@ from the stage you complete first, and logs it.
   teoidus solve the same one.
 - Measure the flowchart: how close does following it get to the best block? Also
   recompute the video's 50-solve frequencies (88% edge+centre pair, 66% corner+edge
-  pair, 96% either) exactly.
+  pair, 96% either) exactly — for the fixed white–blue block, which will fall to the
+  fallback more often than the video's numbers suggest (learner review, item 9).
 
 ### Open
 - Confirm white/blue-left is what "yellow top, red front" means for the first block.
 - Display while an M offset is open: the net is drawn in the model frame, so it
-  differs from the cube in hand until the offset closes.
+  differs from the cube in hand until the offset closes. Now scheduled as stage 2,
+  a course prerequisite.
+- Efficiency margin N per lesson, and whether the 15 s inspection limit is on by
+  default: tune in hand.
+- Build order: prerequisites 1-stage-2 and 3 first, then the lessons.
 
 ## Remaining — TODO
 
