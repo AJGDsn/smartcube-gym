@@ -144,14 +144,26 @@ export function isTargetSolved(cube: Cube3x3, mask: Cube3x3Mask): boolean {
 }
 
 /** Shortest solve to the target in any of its frames (ties go to the earlier
- *  frame, so the identity wins). Moves are in that frame's naming. */
+ *  frame, so the identity wins). Moves are in that frame's naming. With `below`,
+ *  only solves strictly shorter than it count (null if there are none).
+ *
+ *  Each frame after the first only searches for something strictly shorter than
+ *  the best so far. The search is iterative deepening, so a failed search to a
+ *  low limit is cheap, while an unbounded one runs to the step's full depth: for
+ *  the 24 side 1×2×3s × 4 frames that was 4 s of planning verdict on the main
+ *  thread, and the bound brings it back near the single-frame cost. */
 export function solveInFrames(
-  start: Cube3x3, mask: Cube3x3Mask, cfg: StepSolverConfig,
+  start: Cube3x3, mask: Cube3x3Mask, cfg: StepSolverConfig, below = Infinity,
 ): { moves: Move3x3[]; frame: number } | null {
   let best: { moves: Move3x3[]; frame: number } | null = null;
+  let limit = Math.min(cfg.depthLimit, below - 1);
   for (const f of framesFor(mask)) {
-    const moves = solveFromState(inFrame(start, f), mask, cfg);
-    if (moves && (!best || moves.length < best.moves.length)) best = { moves, frame: f };
+    if (limit < 0) break;
+    const moves = solveFromState(inFrame(start, f), mask, limit === cfg.depthLimit ? cfg : { ...cfg, depthLimit: limit });
+    if (moves && moves.length <= limit) {
+      best = { moves, frame: f };
+      limit = moves.length - 1;
+    }
   }
   return best;
 }

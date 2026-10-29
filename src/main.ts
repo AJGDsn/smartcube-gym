@@ -941,21 +941,21 @@ function checkStepCompletion() {
     // ms-cheap at pd4; 223 is skipped until the solver runs off the main thread
     // (each of its 12 placements would build a ~1.6s pruning table).
     if (optimalArr && s.kind === 'block' && s.candidateMasks.length > 1 && (s.family === '222' || s.family === '123')) {
-      let bestLen = Infinity;
+      // Only a STRICTLY cheaper placement changes the verdict, so each search is
+      // bounded by the best length so far, starting from the one you built.
+      let bestLen = optimalArr.length;
       let bestIdx = -1;
       for (let i = 0; i < s.candidateMasks.length; i++) {
-        const l = solveInFrames(state.stepStartCube, s.candidateMasks[i], s.solver)?.moves.length;
-        if (l != null && l < bestLen) { bestLen = l; bestIdx = i; }
+        const l = solveInFrames(state.stepStartCube, s.candidateMasks[i], s.solver, bestLen)?.moves.length;
+        if (l != null) { bestLen = l; bestIdx = i; }
       }
-      if (bestIdx >= 0) {
-        state.lastResult.rank = {
-          bestName: placementName(s.candidateMasks[bestIdx]),
-          bestLen,
-          yoursName: placementName(solvedMask),
-          yoursLen: optimalArr.length,
-          yoursBest: optimalArr.length <= bestLen,
-        };
-      }
+      state.lastResult.rank = {
+        bestName: placementName(bestIdx >= 0 ? s.candidateMasks[bestIdx] : solvedMask),
+        bestLen,
+        yoursName: placementName(solvedMask),
+        yoursLen: optimalArr.length,
+        yoursBest: bestIdx < 0,
+      };
     }
     // Inspection: how long you looked before the first solve move (first step
     // of the solve phase only — later journey steps flow straight on).
