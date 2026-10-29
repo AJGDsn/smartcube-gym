@@ -211,7 +211,8 @@ the one thing **Hint** charges a rung for. The number lands in the review as
   "anywhere" block trainer below.
 - **2×2×3** — build a 2×2×3 anywhere, any route.
 - **2×2 → 2×2×3** — the scramble pre-builds a 2×2×2; extend it.
-- **1×2×3 L** — a first block against any face (Roux/LEOR).
+- **1×2×3 L** — a Roux/LEOR first block; which blocks count is set in Settings ›
+  Roux 1×2×3 · first blocks (default: white bottom, blue left).
 - **1×2×3 R (L solved)** — the Roux second block, left block pre-built.
 
 ## Training modes
@@ -341,10 +342,21 @@ review — mid-solve they're just moves.
 
   On a Foundations lesson with a find-the-piece prompt, the prompt comes first and
   the gate appears once you have answered it — answering *is* inspecting.
-- **Solve orientation** — White-top (scramble and solve in one frame) or
-  Yellow-top (x2): scramble white-top, then physically flip to solve yellow-top;
-  all displayed notation is translated to the held frame. EO trainers manage
-  their own frames and ignore this.
+- **Hold** — how you hold the cube while solving: white or yellow top, and any of
+  the four front colours (e.g. yellow top / red front). Scramble white-top /
+  green-front, then pick the cube up this way; the cube view and every hint are
+  shown in that hold. The Roux 1×2×3 and EO trainers hold the cube their own way
+  and ignore this.
+- **Roux 1×2×3 · first blocks** — which first blocks count, as a ladder towards
+  colour neutrality: **Blue left** (white bottom, blue left: one block) → **Blue or
+  green** → **Any left** (any side colour, white bottom) → **+ Yellow bottom** →
+  **Any block**. The 1×2×3 trainers always show the cube with your block at the
+  bottom-left, named by the block's own colours ("hold white-bottom / blue-left").
+  The second-block drill pre-builds one of the rung's first blocks at random.
+  After an **M** (M′, M2) the view and the hint names follow your hands — the app
+  spots a slice from its two halves arriving together. A wide **r** is not spotted
+  yet (it is reported exactly like an L), so after an r the hint names are a slice
+  turn off until you undo it.
 - **Full EO · side axis** — Detect (default: solve either side, the app reads
   which off the finished cube), or pin Blue front / Red front to drill one axis
   deliberately.

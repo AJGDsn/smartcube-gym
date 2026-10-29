@@ -621,6 +621,50 @@ depended on the pick — it scores the block you actually finished.
 **Not verified:** feel on a real cube. The harnesses prove the pick follows the
 simulated solver; whether it follows *Ian's* blockbuilding better needs hands.
 
+## Done (2026-10-29) — Hold setting, colour-neutrality ladder, slices in the hand frame
+Built after Ian's in-hand test of the slice fix. `src/hold.ts`, guarded by
+`scripts/hold-check.ts` (in `check`; 10 684 checks, 0 mismatches; mutation: no
+re-hold → 1289, always reconsider → 187).
+- **Hold (Settings › Hold)** — replaces the White-top / Yellow-top (x2) toggle with
+  top (white/yellow) × front (4 colours). Seeded once from the old `orient` key
+  (yellow-top was blue-front). Display only; applies to every trainer except the Roux
+  1×2×3 and EO trainers. `orientLabel` now names any rotation from its centres.
+- **Roux 1×2×3 trainers hold by the block.** `b123L`, `course123` and `b123R` show the
+  cube with the coached block at the bottom-left (`holdFor`), labelled by the block's
+  own colours ("hold white-bottom / blue-left"), since after a slice the centres no
+  longer say how you hold it. `eo123` keeps its own x2 view (its EO axis is model F/B).
+- **Colour-neutrality ladder (Settings › Roux 1×2×3 · first blocks)**, Ian's rungs,
+  each adding to the last (read as cumulative — confirm with Ian): blue left → blue or
+  green → any side colour on white → + yellow bottom; a fifth **Any block** = the old
+  accept-all-24. Default: blue left. `main.ts` `withRung` derives the 1×2×3 steps
+  (cached, so identity-keyed caches hold); `b123R` rolls which first block to pre-build
+  (`state.fbRoll`, an absolute index into `ALL_FB`, kept on retry) and targets the
+  block opposite it (`bothBlocks`). 2×2×2 / 2×2×3 / Foundations targets untouched (Ian).
+- **The hand frame (stage 2, partly).** `state.handFrame` re-holds the display on a
+  **timed slice pair** through the block's axis (two opposite-sense turns ≤ 150 ms
+  apart, `SLICE_PAIR_MS`), with the new frame read exactly from the state
+  (`reholdAfterSlice`). Picture, highlights and hint names all go through the one
+  display rotation, so they follow. Browser-verified on `b123R`: an M keeps the first
+  block pinned bottom-left while the centres move exactly as in hand; finishing from
+  an offset completes.
+  - **Why timing, not pieces:** a piece-count rule (frame with most of the block in
+    place) is exact for a real Roux solver, but the app's own routes are OUTER turns
+    that imitate M with the block's face (L), and a hint-follower's L is reported
+    exactly like an r. Measured: it re-held 37/60 hint-following FB builds and 20/25
+    SB builds wrongly. Timing doesn't collide with hints (read at human pace).
+  - **Not detected: wide turns.** r arrives as a lone L — indistinguishable from L by
+    state or timing. Needs prerequisite 3 (routes that use r, so an L the app
+    suggested as r can be read as r).
+  - **Hardware:** the 150 ms window is an assumption (cubedex uses 100 ms on GAN).
+    MoYu / QiYi slice timing is unverified — needs a cube in hand.
+- **Also found (pre-existing):** the outer-turn `b123R` route often doesn't exist
+  within the solver's depth 12 — 13/30 served cases (6/30 even over frames), so Hint /
+  Show the route are blank and the rep stays out of Stats. A Roux second block needs M;
+  this is prerequisite 3's strongest case.
+- **Speed fix (`3eb8222`, deployed):** the planning verdict ranked every side 1×2×3 in
+  every frame unbounded (~4 s at a finish); now bounded by the best so far (6–13 ms
+  warm; the first finish of a session still builds 24 tables, ~2 s, as before).
+
 ## Planned (2026-10-27) — Roux first-block course (design, for Ian's review)
 
 Built on teoidus, *Finding an Efficient First Block in Inspection*
@@ -755,10 +799,10 @@ wherever it sits ("the extra move to put it back is the user's inefficiency").
   emit a cancelling seam (stage 1 ends U', stage 2 starts U → "R' R …" in model
   names). Not caused by frames; worth its own fix with
   `human-solve-blocks-check`.
-- **Stage 2, not started — now a course prerequisite** (learner review, item 2):
-  draw the cube and name moves in the HAND frame (cubedex-style slice pairing,
-  relabelled retroactively), and count a slice as one move where the metric should
-  be STM. Without it, guided narration is unreadable after the first M.
+- **Stage 2, PARTLY BUILT 2026-10-29** (see "Done (2026-10-29)"): the 1×2×3 trainers
+  draw and name moves in the hand frame, re-holding on timed M pairs. Still to do: wide
+  turns (r) — needs prerequisite 3 — logging M rather than R L', and counting a slice
+  as one move (STM).
 
 **Prior art: cubedex** (github.com/poliva/cubedex, MIT, by the author of our BLE
 library; read at `398add9`, 2026-10-27). In `src/lib/smartcube-parity.ts`:
@@ -806,6 +850,11 @@ habits. Work involved:
   family, so a slice the learner makes costs one move, like the route's.
 - Guard: extend `frame-check` (or a new harness) so slice-bearing routes, applied as
   the cube reports them, still complete the target.
+- **Measured 2026-10-29, raising the priority:** with outer turns only, the Roux
+  second block often has no route within depth 12 (13/30 served `b123R` cases), and
+  outer routes turn the first block's face to imitate M — which also blocks reading
+  r from the cube (see "Done (2026-10-29)"). Route-aware hand tracking (the app
+  suggested r, the cube reported L → it was r) lands with this.
 
 ### Lessons (Foundations model: observe / guided / coached / independent)
 Each approach is an ordered list of stages. The app infers which approach you used

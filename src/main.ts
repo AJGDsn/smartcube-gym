@@ -30,7 +30,7 @@ import { locatePieceNow, nextFocusPiece, nextTwoFocusPieces, pieceDescription, p
 import { humanSolveFromState } from './human-solve.ts';
 import { activeFramed, anchorFramed, canonicalIndexIn } from './placement.ts';
 import {
-  faceletToModel, framedCandidates, inFrame, isTargetSolved, movesFromFrame, movesToFrame,
+  FRAMES, faceletToModel, framedCandidates, inFrame, isTargetSolved, movesFromFrame, movesToFrame,
   solvedFrame, solveInFrames, type Framed,
 } from './frame.ts';
 import { classifyRoute, isPairJoined, PATTERN_HOW, routeRoles, type MoveRole, type PatternName } from './patterns.ts';
@@ -226,6 +226,10 @@ import {
   OTHER_AXIS,
   type SolveAxis,
 } from './orient.ts';
+import {
+  ALL_FB, CN_LABEL, CN_RUNGS, HOLDS, HOLD_ROTATION, SLICE_PAIR_MS, blockHoldLabel, bothBlocks, holdFor, isSlicePair, reholdAfterSlice, rungBlocks,
+  type CnRung, type Hold,
+} from './hold.ts';
 import { CubeManager, clearSavedMacs, getSavedMacs } from './bluetooth.ts';
 
 type Mode = 'scramble' | 'solve';
@@ -270,6 +274,9 @@ interface State {
   eoAxis: SolveAxis; // free-EO: which side axis EO is solved against this scramble
   eoCommitted: boolean; // free-EO: axis decided for this scramble (vs awaiting an ask-prompt)
   blockEoOrient: number; // 2×2×3+EO: rolled orientation (0..3) — the random long-side colour
+  fbRoll: number; // Roux second block: which first block (index into hold.ts ALL_FB) is pre-built
+  handFrame: number; // Roux 1×2×3: the FRAMES index you are holding the model in (slice offset)
+  slicePaired: number; // index in movesThisStep of the last slice pair's second half (-1: none)
   courseSeedTag: PatternName | null; // this scramble is a seeded lesson example (not graded)
   /** Graded-course example issued but not yet applied — consumed (bumpCourseIntro)
    *  when the scramble completes, so re-issuing scrambles can't burn examples. */
@@ -355,8 +362,57 @@ function lessonPhaseNow(): LessonPhase | null {
 }
 function steps(): StepDef[] {
   const def = activeLessonDef();
-  return def ? [def.step] : trainer().steps;
+  return def ? [def.step] : trainer().steps.map((s) => withRung(s, state.fbRoll ?? 0));
 }
+
+// Roux 1×2×3 steps take their blocks from the colour-neutrality rung (hold.ts):
+// the first block accepts the rung's blocks, canonical white-bottom / blue-left;
+// the second-block drill pre-builds the rolled first block and targets the block
+// opposite it. Derived steps are cached so everything keyed by step or mask
+// identity (the canonical index, the framed candidates, frames) stays stable.
+const rungStepCache = new Map<string, StepDef>();
+function withRung(s: StepDef, fbRoll: number): StepDef {
+  const key = s.id === '123L' ? `L:${cnRung}` : s.id === '123Rd' ? `R:${fbRoll}` : null;
+  if (!key) return s;
+  let d = rungStepCache.get(key);
+  if (!d) {
+    if (s.id === '123L') {
+      const blocks = [...rungBlocks(cnRung)];
+      d = { ...s, candidateMasks: blocks, canonicalMask: blocks[0] };
+    } else {
+      const fb = ALL_FB[fbRoll] ?? ALL_FB[0];
+      const both = bothBlocks(fb);
+      d = { ...s, candidateMasks: [both], canonicalMask: both, prereqMask: fb };
+    }
+    rungStepCache.set(key, d);
+  }
+  return d;
+}
+function is123(s: StepDef | null): s is StepDef {
+  return !!s && s.kind === 'block' && s.family === '123';
+}
+/** The first block a Roux step is held by: the pre-built one, or the one being coached. */
+function handBlock(s: StepDef) {
+  return s.prereqMask ?? coachPick(s).mask;
+}
+/** Re-hold after a timed slice pair through the block's axis (hold.ts: a physical
+ *  M lands as two outer turns milliseconds apart). Only solve moves count: the
+ *  turn that lands the scramble is not a slice of yours. */
+function updateHandFrame(wasSolving: boolean) {
+  const s = currentStep();
+  if (!wasSolving || state.mode !== 'solve' || !is123(s)) return;
+  const ms = state.movesThisStep, ts = state.movesThisStepTs;
+  const n = ms.length;
+  // Each turn pairs at most once: the second half of a slice can't open the next.
+  if (n < 2 || n - 2 <= state.slicePaired || ts[n - 1] - ts[n - 2] > SLICE_PAIR_MS) return;
+  const fb = handBlock(s);
+  if (!isSlicePair(ms[n - 2], ms[n - 1], fb)) return;
+  const before = applyMoves(state.cube, invertTurns([ms[n - 2], ms[n - 1]]));
+  state.handFrame = reholdAfterSlice(before, state.cube, fb, state.handFrame);
+  state.slicePaired = n - 1;
+}
+const invertTurns = (ms: Move3x3[]): Move3x3[] =>
+  [...ms].reverse().map((m) => (m.endsWith('2') ? m : m.endsWith("'") ? m[0] : `${m}'`) as Move3x3);
 function currentStep(): StepDef | null {
   return steps()[state.stepIndex] ?? null;
 }
@@ -581,7 +637,11 @@ function startScramble(base: Cube3x3, baseHistory: Move3x3[], explicit?: Move3x3
   const t = trainerById(state?.trainerId ?? 'petrus');
   // Foundations trainers train their ACTIVE LESSON's step, not t.steps.
   const lessonDef = activeLessonDefFor(t.id);
-  const stepsList = lessonDef ? [lessonDef.step] : t.steps;
+  // Roll which first block the Roux second-block drill pre-builds (any block the
+  // colour-neutrality rung accepts), kept on an explicit setup like the 2×2×3+EO roll.
+  const fbRoll = explicit ? (state?.fbRoll ?? 0)
+    : t.steps[0]?.id === '123Rd' ? Math.floor(Math.random() * rungBlocks(cnRung).length) : 0;
+  const stepsList = lessonDef ? [lessonDef.step] : t.steps.map((s) => withRung(s, fbRoll));
   // Roll the 2×2×3+EO orientation (random long-side colour) for this scramble; reuse
   // the current one when reproducing an explicit setup (retry/undo keeps the case).
   const blockEoOrient = explicit ? (state?.blockEoOrient ?? 0) : isBlockEo(stepsList[0]) ? randomBlockEoOrient() : 0;
@@ -658,6 +718,9 @@ function startScramble(base: Cube3x3, baseHistory: Move3x3[], explicit?: Move3x3
     eoAxis: lastEoAxis(),
     eoCommitted: false,
     blockEoOrient,
+    fbRoll,
+    handFrame: 0,
+    slicePaired: -1,
     courseSeedTag,
     courseSeedPending,
     lessonRep,
@@ -703,7 +766,8 @@ function step(move: Move3x3) {
   state.cube = applyMove(state.cube, move);
   state.history.push(move);
   state.assist = survivingAssist();
-  if (state.learn) { afterLearnMove(); return; }
+  const wasSolving = state.mode === 'solve';
+  if (state.learn) { afterLearnMove(); return; } // walkthrough routes are outer turns
   if (state.mode === 'solve') {
     // Free-EO stays axis-agnostic through the solve: detect reads the axis off the
     // finished state; gb/ro already pinned it at scramble time. No per-move axis work.
@@ -713,6 +777,7 @@ function step(move: Move3x3) {
     state.identify = null; // find-the-piece prompts are pre-solve scaffolding — first turn ends them
   }
   afterChange();
+  updateHandFrame(wasSolving); // after afterChange: it re-picks the block the hold follows
 }
 
 function afterLearnMove() {
@@ -731,6 +796,8 @@ function afterLearnMove() {
       state.movesThisStepTs = [];
       state.placementIdx = null;
       state.placementPinned = false;
+      state.handFrame = 0; // a new step starts held the usual way, centres home
+      state.slicePaired = -1;
     }
     return;
   }
@@ -788,6 +855,8 @@ function afterChange() {
       state.movesThisStepTs = [];
       state.placementIdx = null;
       state.placementPinned = false;
+      state.handFrame = 0; // a new step starts held the usual way, centres home
+      state.slicePaired = -1;
       state.assist = null;
       state.solveStartMs = null; // timer starts on the first solve move
       state.solveReadyMs = Date.now(); // inspection clock: scramble done → first move
@@ -1017,6 +1086,8 @@ function checkStepCompletion() {
       state.movesThisStepTs = [];
       state.placementIdx = null;
       state.placementPinned = false;
+      state.handFrame = 0; // a new step starts held the usual way, centres home
+      state.slicePaired = -1;
     }
   }
 }
@@ -1451,10 +1522,22 @@ let lastUnits = 0;
 let lastFlashKey = '';
 
 // --- solving orientation (phase-flip) + free-EO side-axis choice ---
-let orientEnabled = store.getBool('orient', false);
-function setOrient(b: boolean) {
-  orientEnabled = b;
-  store.setBool('orient', b);
+// The hold for every trainer that doesn't choose its own (hold.ts). Seeded once
+// from the old white-top / yellow-top toggle, whose yellow-top was blue-front.
+let holdPref: Hold = store.getEnum<Hold>('hold', HOLDS, store.getBool('orient', false) ? 'yb' : 'wg');
+function setHold(h: Hold) {
+  holdPref = h;
+  store.setEnum('hold', h);
+  render();
+}
+// Roux 1×2×3 colour neutrality: which first blocks count (hold.ts ladder).
+let cnRung: CnRung = store.getEnum<CnRung>('cn-123', CN_RUNGS, 'blue');
+function setCnRung(r: CnRung) {
+  cnRung = r;
+  store.setEnum('cn-123', r);
+  // The candidate list just changed under the pick, so let it choose afresh.
+  state.placementIdx = null;
+  state.placementPinned = false;
   render();
 }
 
@@ -1610,7 +1693,9 @@ function solveRotation(): RotationMove[] {
   if (isBlockEo(s)) return blockEoDisplayRots(blockEoMethod, state.blockEoOrient);
   if (s?.id === 'eo123') return ['x2'] as RotationMove[];
   if (state.mode === 'solve' && isFreeEo(s)) return eoRot();
-  return orientEnabled ? (['x2'] as RotationMove[]) : [];
+  // Roux 1×2×3: the slice offset you're holding, then the block at the bottom-left.
+  if (is123(s)) return [...FRAMES[state.handFrame ?? 0], ...holdFor(handBlock(s))] as RotationMove[];
+  return HOLD_ROTATION[holdPref];
 }
 /** True when the CUBE VIEW should render rotated (picture + tap translation).
  * Block-preserving EO (eo223, eo123) hold this in BOTH scramble and solve —
@@ -2359,7 +2444,11 @@ function buildCubePanel(s: StepDef | null): HTMLElement {
   // "tap a corner to aim" / "execute, then tap where it landed" instructions have
   // moved there. (The hold deliberately stayed: it describes the view, not the
   // phase, and it must not scroll away with the instruction when the phase turns.)
-  const holdNote = s?.hold
+  // A Roux block is held by its own colours ("white-bottom / blue-left") — after a
+  // slice the centres no longer say how you're holding it.
+  const holdNote = solveFrame() && is123(s)
+    ? `hold ${blockHoldLabel(handBlock(s))}${state.handFrame ? ' · centres off by a slice turn' : ''}${s.hold ? ` — ${s.hold}` : ` · ${s.label} target`}`
+    : s?.hold
     ? s.hold
     : `${solveFrame() ? `hold ${orientLabel(solveRotation())}` : 'hold white-up / green-front'}${s ? ` · ${s.label} target` : ''}`;
   p.appendChild(el('div', 'meter-cap', note || holdNote));
@@ -3381,15 +3470,33 @@ function renderSettings() {
 
   modal.appendChild(el('hr'));
 
-  // Solve orientation
+  // Hold — top colour, then front colour (hold.ts HOLDS: w/y × four fronts).
   const orientGroup = el('div', 'group');
-  orientGroup.appendChild(el('div', 'glabel', 'Solve orientation'));
-  const orientSeg = el('div', 'seg');
-  orientSeg.appendChild(segBtn('White-top', () => setOrient(false), !orientEnabled));
-  orientSeg.appendChild(segBtn('Yellow-top (x2)', () => setOrient(true), orientEnabled));
-  orientGroup.appendChild(orientSeg);
-  orientGroup.appendChild(el('div', 'hint', 'Other trainers: scramble white-top / green-front, then solve in the chosen hold.'));
+  orientGroup.appendChild(el('div', 'glabel', 'Hold'));
+  const topSeg = el('div', 'seg');
+  for (const [t, label] of [['w', 'White top'], ['y', 'Yellow top']] as const) {
+    // Keep the front colour if the new top allows it (both tops take all four).
+    topSeg.appendChild(segBtn(label, () => setHold(`${t}${holdPref[1]}` as Hold), holdPref[0] === t));
+  }
+  orientGroup.appendChild(topSeg);
+  const frontSeg = el('div', 'seg');
+  for (const [f, label] of [['g', 'Green'], ['r', 'Red'], ['b', 'Blue'], ['o', 'Orange']] as const) {
+    frontSeg.appendChild(segBtn(`${label} front`, () => setHold(`${holdPref[0]}${f}` as Hold), holdPref[1] === f));
+  }
+  orientGroup.appendChild(frontSeg);
+  orientGroup.appendChild(el('div', 'hint', 'How you hold the cube while solving, for every trainer that doesn\'t pick its own (the Roux 1×2×3 and EO trainers do). Scramble white-top / green-front, then pick the cube up this way.'));
   modal.appendChild(orientGroup);
+
+  modal.appendChild(el('hr'));
+
+  // Roux 1×2×3 — colour neutrality ladder (hold.ts)
+  const cnGroup = el('div', 'group');
+  cnGroup.appendChild(el('div', 'glabel', 'Roux 1×2×3 · first blocks'));
+  const cnSeg = el('div', 'seg');
+  for (const r of CN_RUNGS) cnSeg.appendChild(segBtn(CN_LABEL[r], () => setCnRung(r), cnRung === r));
+  cnGroup.appendChild(cnSeg);
+  cnGroup.appendChild(el('div', 'hint', 'Which first blocks count, working up to colour neutrality: white bottom / blue left, then green left too, then any side colour on white, then yellow bottom as well. The cube is shown with your block at the bottom-left, and hints keep their names through M slices (wide r turns not yet: an r is reported exactly like an L).'));
+  modal.appendChild(cnGroup);
 
   modal.appendChild(el('hr'));
 

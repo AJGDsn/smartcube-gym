@@ -19,7 +19,9 @@ const PREFIX = 'cube-trainer.';
 // data, but it lives in the same namespace.
 export type Key =
   | 'theme'
-  | 'orient'
+  | 'orient' // legacy yellow-top toggle; read once to seed 'hold'
+  | 'hold'
+  | 'cn-123'
   | 'eo-axis-mode'
   | 'eo-last-axis'
   | 'block-eo-method'
