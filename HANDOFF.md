@@ -665,6 +665,99 @@ re-hold → 1289, always reconsider → 187).
   every frame unbounded (~4 s at a finish); now bounded by the best so far (6–13 ms
   warm; the first finish of a session still builds 24 tables, ~2 s, as before).
 
+## Plan of action (2026-11-05) — Roux moves, the first-block course, and an optional AI coach
+Ian asked to revisit AI coaching (removed in `6090c39`, "Remove the AI coaching hook";
+`src/coaching.ts` is recoverable from `6090c39^`: a browser-direct Anthropic call with
+the key in localStorage) and for one plan covering everything outstanding.
+
+### The AI stance
+- **The engine stays the brain; the AI is only the voice.** Language models are
+  unreliable at cube spatial reasoning: they invent moves, piece positions and move
+  counts. So the AI never generates moves, never judges a solve and never decides
+  what counts. It turns facts the app has already computed into explanation.
+- **It is only as good as the facts.** For Roux first blocks the facts that matter
+  (which approach you used, which pairs and lines were free, the best route per
+  approach) don't exist until phase 2. An AI added now would have little true to say.
+  Petrus / 2×2×2 already have facts (pattern vocabulary, placement verdict), so a
+  small trial can run there first.
+- **Where it pays:** the post-solve debrief, a free-form "ask the coach" in the
+  review, and a periodic progress review from Stats. **Not mid-solve:** eyes are on
+  the cube, and reading a paragraph then is the wrong ask.
+- **Cost and access (checked 2026-11-05):** DeepSeek's API is OpenAI-compatible
+  (`https://api.deepseek.com`) and answered a CORS preflight from
+  `https://ajgdsn.github.io` with that origin allowed, so the static site can call it
+  directly, no server. `deepseek-flash`: $0.30 / M input (cache miss), $1.20 / M output
+  at peak, half off-peak. A debrief is roughly 2k tokens in and 300 out, about $0.001.
+- **Key safety:** every Pages project on the account shares the `ajgdsn.github.io`
+  origin, so any of them can read a key in localStorage. Use a key made for this app
+  only, with a small balance or spend limit. The key is entered in Settings, stored
+  through `storage.ts`, and never committed.
+- **Provider-agnostic:** one OpenAI-format client with base URL / model / key settings
+  covers DeepSeek, OpenAI, OpenRouter and a local Ollama. DeepSeek also serves an
+  Anthropic-format endpoint. Off by default; the app works fully without it.
+
+### Phase 0 — answers from Ian (no code)
+- In-hand test of `bf82bcb`: does an M re-hold the hint names, and does a slow R then
+  L′ leave them alone? If an M is missed, send the Settings event log: the slice-pair
+  window (`SLICE_PAIR_MS`, 150 ms) needs the real timing.
+- The 2×2×2 that wasn't recognised: did the screen show the block finished?
+- Colour-neutrality rungs: cumulative (as built), or each practised on its own?
+
+### Phase 1 — routes that move like Roux (prerequisite 3)
+1. A Roux move set for the 1×2×3 family (outer turns + M + r; SB drill U R r M).
+   Check pruning cost at the current depths. `src/engine/` stays untouched.
+2. Count in STM for this family: ideal, course bands, grading, so your M costs one move.
+3. One vocabulary between routes and the cube: a route's M is the reported R L′ plus
+   a frame change. Learn's wrong-turn check, the next-move hint and lookahead all
+   compare through it.
+4. Route-aware hand frame: when the app suggested r and the cube reports L, it was an
+   r. This closes the wide-turn gap left by `bf82bcb`. Log M rather than R L′.
+5. Fixes that come with it: `b123R` often has no outer-turn route within depth 12
+   (13/30 cases); the `humanSolveFromState` build-then-extend cancelling seam
+   ("R′ R …").
+6. Guard: a harness that applies slice-bearing routes as the cube reports them and
+   requires the target done, plus hold-check extended to r.
+
+### Phase 2 — first-block structures (prerequisite 2)
+1. Detect the flowchart's features on any cube state: corner+edge pairs, edge+centre
+   pairs, 3×1 D lines, 3×1 E lines, disjointed pairs (one move from joined). Each is
+   checked against a brute-force oracle harness at 0 mismatches.
+2. Approach inference: which approach a solve used, from the stage completed first.
+3. Best route per approach (optimal to the first stage, then on to the block).
+4. Measure the flowchart against the best block, and the video's frequencies, for the
+   fixed white–blue block.
+
+### Phase 3 — the Roux first-block course
+The lessons from "Planned (2026-10-27)", with the learner-review gates (approach used
++ within N moves of that approach's best; inspection gate from coached; per-approach
+best in every review):
+1. Recognition: find the features, pick the best start, estimate its move count.
+2. Placement test (baseline) + refinement of F2L-style.
+3. F2L pair first.  4. Line-block square.  5. E-line square.
+6. Line + line (niche).  7. Flowchart inspection drill.  8. First block into second.
+
+Seeds: the video's own scrambles (credited) as observe examples, plus harvested
+cases where each approach is clearly best.
+
+### Phase 4 — the AI coach (optional layer)
+- **4a, the plumbing and a trial on Petrus / 2×2×2 (can start any time):** client +
+  Settings (provider, model, key, a test button, running cost); a deterministic
+  **facts packet** (step, hold, the case label, your moves vs the ideal, patterns,
+  placement verdict, inspection time); an output guard that rejects or strips any move
+  sequence not in the packet; a **Debrief** button in the review.
+- **4b, the Roux debrief (after phase 2):** the packet gains approach used vs best,
+  features available at the start, and per-approach best. Example aim: "a free pair
+  was waiting at the front; pair-first did it in 7, you took 11 via the edge".
+- **4c, ask the coach:** a question box in the review, answered from the same packet.
+- **4d, progress review:** from Stats and lesson history, what to practise next.
+- **4e, maybe:** spoken debriefs through the browser's built-in speech (free), so
+  your eyes stay on the cube.
+- **Guard:** fixed packets with a recorded model reply run through the output guard in
+  `check`. Live calls cost money, so they never run in CI.
+
+### Order
+Phase 0 → 1 → 2 → 3, with 4a whenever Ian wants a feel for it and 4b–4d after phase 2.
+
 ## Planned (2026-10-27) — Roux first-block course (design, for Ian's review)
 
 Built on teoidus, *Finding an Efficient First Block in Inspection*
