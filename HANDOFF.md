@@ -679,6 +679,100 @@ re-hold → 1289, always reconsider → 187).
   every frame unbounded (~4 s at a finish); now bounded by the best so far (6–13 ms
   warm; the first finish of a session still builds 24 tables, ~2 s, as before).
 
+## Done (2026-11-09) — Phase 2: first-block structures (branch `roux/fb-structures`, not merged)
+Run unattended at the master thread's request, after Ian's "Yes to SmartCube". Branch
+only: nothing merged, pushed or deployed. Pure modules + harnesses; no UI change.
+
+- **`src/fb-structures.ts`** — teoidus's vocabulary as masks on the block's own pieces,
+  defined once on the display's bottom-left block and carried to any first block via
+  `hold.ts`; judged with `frame.ts` (centre-less structures count joined anywhere, ones
+  with the centre in any of 4 placements around it):
+  - doubles: edge+centre (`ecD`, `ecF`, `ecB`), F2L pair = corner + middle edge
+    (`pairF`/`pairB`), line block = corner + bottom edge (`lineBlockF`/`B`);
+  - lines: 3×1 bottom `lineD`, 3×1 E line `lineE`; squares `squareF`/`B`; the block.
+  - `presentStructures`, `disjointedPairs` (one outer or slice turn from formed),
+    `flowchart` (the video's branch order → the approaches it points to).
+  - **Approaches under fixed colour** fall out of how a square splits into two doubles:
+    DL+C with an F2L pair (DL+C first = F2L-style, pair first = pair-first), or FL/BL+C
+    with a line block (line block first = line-block square, E edge + centre first =
+    E-line square); plus line + line. teoidus's E-line "treat it as DL, pretend you're
+    colour neutral" builds a *different* block; for one fixed block it is exactly the
+    E edge + centre joined to a line block.
+  - `readApproach(states)` reads which approach a solve used: at the turn the square
+    (or, for line + line, the block) forms, which halves stood just before and which
+    formed first and stayed. Null if nothing was joined.
+  - `bestForApproach` — the approach's best staged route: optimal to its first
+    structure (placements within one move of the shortest), then to its square, then
+    to the block. Each stage optimal for its own target (so not forced to keep the
+    first structure — the route a follower of the approach has to beat).
+- **`scripts/fb-structures-check.ts`** (in `check`, ~2 min): each structure covers
+  exactly the named pieces; detection, disjointed pairs and the branch agree with an
+  **independent geometric oracle** (home stickers as 3D points + directions under the
+  24 proper rotations — no engine moves, masks or frames) on random and planted states
+  for 8 blocks; built-by-construction solves read back as their approach; best routes
+  reach the block and never beat the optimum. 12 183 checks, 0 mismatches. Mutation:
+  no frames → 2676, approach order swapped → 24, `ecF` given the wrong pieces → 8.
+- **`scripts/fb-flowchart-measure.ts`** (report, not a gate) — results below.
+
+### Measured (2026-11-09)
+1000 random scrambles (lengths: first 300).
+
+#### 1. How often a feature is free
+
+Video (50 of his solves): edge+centre 88%, corner+edge 66%, either 96%.
+
+| first blocks | edge+centre pair | corner+edge pair | either | 3×1 bottom line | 3×1 E line |
+|---|---|---|---|---|---|
+| blue (1: white-bottom / blue-left) | 45% | 21% | 56% | 1% | 1% |
+| bluegreen (2: any of) | 68% | 37% | 80% | 1% | 2% |
+| white (4: any of) | 84% | 50% | 92% | 2% | 4% |
+| dual (8: any of) | 92% | 74% | 98% | 4% | 4% |
+
+#### 2. Which flowchart branch fires (fixed white-bottom / blue-left)
+
+| branch | share |
+|---|---|
+| lineD | 1% |
+| lineE | 1% |
+| cornerEdge | 20% |
+| edgeCentre | 35% |
+| disjointed | 20% |
+| fallback | 24% |
+
+#### 3. Move counts (fixed white-bottom / blue-left, HTM, outer turns, 300 scrambles)
+
+Block optimum (any route): mean 6.61.
+
+| approach | mean best staged route | among the best (ties count for each) |
+|---|---|---|
+| F2L-style | 8.28 | 30% |
+| F2L pair first | 7.82 | 48% |
+| Line-block square | 7.69 | 52% |
+| E-line square | 8.14 | 30% |
+| Line + line | 7.72 | 52% |
+
+Best approach vs the optimum: mean +0.44; equal in 60%.
+Following the flowchart's pick vs the best approach: mean +0.62; as good in 55%, within 1 in 84%, within 2 in 99%.
+
+(114 s for the move counts.)
+
+**Reading it:**
+- **The video's 88% / 66% / 96% fit a colour-neutral solver, not one fixed block.**
+  For white-bottom/blue-left only: 45% / 21% / 56%. Any side colour on white: 84% /
+  50% / 92%; dual (white or yellow bottom): 92% / 74% / 98%. teoidus was counting
+  across several blocks. For the fixed-colour course, the flowchart lands on its
+  fallback (no feature at all) about a quarter of the time — expectations should say so.
+- **No approach dominates.** Pair-first, line-block and line + line are each among the
+  best on about half of scrambles; F2L-style and E-line about a third. That is the
+  course's premise holding up: a toolkit beats one habit.
+- **The best approach is close to optimal**: +0.44 moves on average, equal in 60%.
+- **Following the flowchart's pick costs +0.62** against the best approach: as good in
+  55%, within 1 in 84%, within 2 in 99%. Good, not perfect — worth teaching as the
+  default with "check the other approach when it's close".
+- **Caveat: HTM, outer turns only.** Routes don't use M or r until Phase 1; with them,
+  counts drop and the ranking between approaches may shift (line + line in particular
+  is a u2 / r-heavy approach). Rerun after Phase 1.
+
 ## Plan of action (2026-11-05) — Roux moves, the first-block course, and an optional AI coach
 Ian asked to revisit AI coaching (removed in `6090c39`, "Remove the AI coaching hook";
 `src/coaching.ts` is recoverable from `6090c39^`: a browser-direct Anthropic call with
@@ -732,7 +826,7 @@ the key in localStorage) and for one plan covering everything outstanding.
 6. Guard: a harness that applies slice-bearing routes as the cube reports them and
    requires the target done, plus hold-check extended to r.
 
-### Phase 2 — first-block structures (prerequisite 2)
+### Phase 2 — first-block structures (prerequisite 2) — BUILT 2026-11-09 on `roux/fb-structures` (see Done)
 1. Detect the flowchart's features on any cube state: corner+edge pairs, edge+centre
    pairs, 3×1 D lines, 3×1 E lines, disjointed pairs (one move from joined). Each is
    checked against a brute-force oracle harness at 0 mismatches.
