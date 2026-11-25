@@ -657,6 +657,20 @@ re-hold → 1289, always reconsider → 187).
     suggested as r can be read as r).
   - **Hardware:** the 150 ms window is an assumption (cubedex uses 100 ms on GAN).
     MoYu / QiYi slice timing is unverified — needs a cube in hand.
+- **Follow-up (2026-11-25): what the app thinks you turned.** Ian's in-hand test
+  passed (hold caption; an M re-holds; it "flickers on the R face but resolves
+  correctly" — the R half is drawn before the L′ half lands and re-holds), but he had
+  no way to see the moves the app read. Added `state.movesShown`: each solve turn
+  named in the hold *before* it (`disp` at that moment), one token per reported turn,
+  a timed slice pair relabelled to M / M′ / M2 (`reholdAfterSlice` now returns the
+  slice too); `mergeTurns` combines neighbours for display (quarter-turn reports
+  R R → R2). Shown live under the step meter (last 16) and as the review's "your
+  solution". The review's ideal is now named in the step-start hold (it was renamed
+  in the finishing hold, wrong after an M). hold-check: 1800 turns named as made, 0
+  mismatches; dropping the relabel → 589. Browser-verified on `b123L`: M then M′
+  cancels; two white-face quarters read D2; Try again with an M gives the same ideal.
+  The flicker is left as is (Ian: resolves correctly); delaying a lone R for the
+  slice window would remove it at ~150 ms latency on every R.
 - **Also found (pre-existing):** the outer-turn `b123R` route often doesn't exist
   within the solver's depth 12 — 13/30 served cases (6/30 even over frames), so Hint /
   Show the route are blank and the rep stays out of Stats. A Roux second block needs M;

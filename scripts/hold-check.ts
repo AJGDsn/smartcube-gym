@@ -14,7 +14,8 @@
 //    slice's two halves near-instant, other turns at human pace), and require the
 //    picture the app draws — hand frame (main.ts updateHandFrame, replayed) + the
 //    block's hold — to BE the cube in hand, sticker for sticker, after every turn.
-//    Hint names are then right too, by 3.
+//    Hint names are then right too, by 3. And the move list names every turn as
+//    you made it: U, R, R2 under their own names, a slice pair shown as one M.
 // 5. Following the app's own outer-turn routes at a human pace never re-holds.
 //
 // Usage: npx tsx scripts/hold-check.ts
@@ -135,22 +136,27 @@ const inv = (m: Move3x3) => (m.endsWith('2') ? m : m.endsWith("'") ? m[0] : `${m
 /** main.ts updateHandFrame, replayed: re-hold on a timed slice pair only. */
 class Tracker {
   h = 0; moves: Move3x3[] = []; ts: number[] = []; paired = -1;
+  /** main.ts movesShown: each turn named in the hold before it, a slice pair relabelled. */
+  shown: string[] = [];
   constructor(readonly fb: Cube3x3Mask) {}
   see(cube: Cube3x3, m: Move3x3, t: number) {
+    this.shown.push(toDisplayMoves([m], [...(FRAMES[this.h] as RotationMove[]), ...holdFor(this.fb)])[0]);
     this.moves.push(m); this.ts.push(t);
     const n = this.moves.length;
     if (n < 2 || n - 2 <= this.paired || this.ts[n - 1] - this.ts[n - 2] > SLICE_PAIR_MS) return;
     const [a, b] = [this.moves[n - 2], this.moves[n - 1]];
     if (!isSlicePair(a, b, this.fb)) return;
-    this.h = reholdAfterSlice(applyMove(applyMove(cube, inv(b)), inv(a)), cube, this.fb, this.h);
+    const r = reholdAfterSlice(applyMove(applyMove(cube, inv(b)), inv(a)), cube, this.fb, this.h);
+    this.h = r.frame;
     this.paired = n - 1;
+    if (r.slice) this.shown.splice(-2, 2, r.slice);
   }
 }
 // Second-block moves a Roux solver makes, none touching the left block. Wide turns
 // (r) are left out on purpose: a lone reported L can't be told from an L yet.
 const SB_MOVES = ['U', 'U2', "U'", 'R', 'R2', "R'", 'M', 'M2', "M'"] as Move3x3[];
 const FB_CFG = { moveSet: TURNS, pruningDepth: 4, depthLimit: 12 };
-let turns = 0, offsetTurns = 0, slicesSeen = 0;
+let turns = 0, offsetTurns = 0, slicesSeen = 0, named = 0;
 for (const fb of ALL_FB) {
   for (let rep = 0; rep < 3; rep++) {
     // A scramble with this first block built, as the drill serves it.
@@ -171,7 +177,12 @@ for (const fb of ALL_FB) {
       // A slice through the block's axis is reported as a pair (validates isSlicePair's senses).
       if (m[0] === 'M') { slicesSeen++; check(evs.length === 2 && isSlicePair(evs[0], evs[1], fb), `${m} reported as ${evs.join(' ')}`); }
       clock += 400; // human pace between turns; a slice's two halves land 20 ms apart
+      const before = tr.shown.length;
       evs.forEach((t, j) => { model = applyMove(model, t); tr.see(model, t, clock + j * 20); });
+      // The app names the turn exactly as you made it — one token, your hand's name.
+      named++;
+      check(tr.shown.length === before + 1 && tr.shown[before] === m,
+        `${blockHoldLabel(fb)}: you turned ${m}, the app shows ${tr.shown.slice(before).join(' ')}`);
       check(model.encode() === next.encode(), 'reported turns do not reach the cube');
       turns++;
       if (tr.h !== 0) offsetTurns++;
@@ -205,6 +216,6 @@ for (let t = 0; t < 16; t++) {
   });
 }
 
-console.log(`hold check — ${HOLDS.length} holds, ${ALL_FB.length} blocks on the ladder, ${turns} second-block turns in hand (${offsetTurns} with the centres off), ${slicesSeen} slices, ${quiet} route turns held still (${backToBack} back-to-back R/L pairs), ${checks} checks`);
+console.log(`hold check — ${HOLDS.length} holds, ${ALL_FB.length} blocks on the ladder, ${turns} second-block turns in hand (${offsetTurns} with the centres off), ${slicesSeen} slices, ${named} turns named as made, ${quiet} route turns held still (${backToBack} back-to-back R/L pairs), ${checks} checks`);
 console.log(`mismatches ${mismatches}`);
 if (mismatches) process.exitCode = 1;

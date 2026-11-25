@@ -263,6 +263,10 @@ interface State {
   stepStartCube: Cube3x3; // live cube state at the start of the current step (for state-based ideal/scoring)
   movesThisStep: Move3x3[];
   movesThisStepTs: number[]; // Date.now() per movesThisStep move (raw stream — pause/lookahead analysis)
+  /** Each solve turn named as you held the cube when you made it (disp at that
+   *  moment), one token per reported turn; a slice pair is relabelled M / M' / M2
+   *  once its second half lands. Display merges neighbours (mergeTurns). */
+  movesShown: string[];
   placementIdx: number | null; // the framed candidate coaching aims at — see coachPick (null = the step-start pick)
   placementPinned: boolean; // user tapped a corner to aim — the pick stops second-guessing them
   solveReadyMs: number | null; // when the scramble completed — inspection runs until the first move
@@ -313,7 +317,7 @@ interface State {
     rebased?: boolean;
   } | null;
   lastResult: {
-    step: string; used: number; optimal: number | null; yourMoves: Move3x3[]; idealMoves: Move3x3[]; case?: string;
+    step: string; used: number; optimal: number | null; yourMoves: Move3x3[]; yourShown?: string[]; idealMoves: Move3x3[]; idealShown?: string[]; case?: string;
     eo?: { gb: { len: number; bad: number }; ro: { len: number; bad: number } };
     /** Planning verdict: the cheapest placement vs the one actually built. */
     rank?: { bestName: string; bestLen: number; yoursName: string; yoursLen: number; yoursBest: boolean };
@@ -408,8 +412,27 @@ function updateHandFrame(wasSolving: boolean) {
   const fb = handBlock(s);
   if (!isSlicePair(ms[n - 2], ms[n - 1], fb)) return;
   const before = applyMoves(state.cube, invertTurns([ms[n - 2], ms[n - 1]]));
-  state.handFrame = reholdAfterSlice(before, state.cube, fb, state.handFrame);
+  const r = reholdAfterSlice(before, state.cube, fb, state.handFrame);
+  state.handFrame = r.frame;
   state.slicePaired = n - 1;
+  // The two halves were one slice: show it as one.
+  if (r.slice) state.movesShown.splice(-2, 2, r.slice);
+}
+/** Shown turns with same-face neighbours combined, the way a solver writes them:
+ *  quarter-turn reports R R read R2, M M read M2, and R R' cancels. */
+function mergeTurns(toks: readonly string[]): string[] {
+  const q = (t: string) => (t.endsWith('2') ? 2 : t.endsWith("'") ? 3 : 1);
+  const base = (t: string) => t.replace(/['2]$/, '');
+  const out: string[] = [];
+  for (const t of toks) {
+    const last = out[out.length - 1];
+    if (last && base(last) === base(t)) {
+      const k = (q(last) + q(t)) % 4;
+      out.pop();
+      if (k) out.push(base(t) + ['', '', '2', "'"][k]);
+    } else out.push(t);
+  }
+  return out;
 }
 const invertTurns = (ms: Move3x3[]): Move3x3[] =>
   [...ms].reverse().map((m) => (m.endsWith('2') ? m : m.endsWith("'") ? m[0] : `${m}'`) as Move3x3);
@@ -710,6 +733,7 @@ function startScramble(base: Cube3x3, baseHistory: Move3x3[], explicit?: Move3x3
     stepStartCube: base,
     movesThisStep: [],
     movesThisStepTs: [],
+    movesShown: [],
     placementIdx: null,
     placementPinned: false,
     solveReadyMs: null,
@@ -763,6 +787,9 @@ let state: State;
 
 function step(move: Move3x3) {
   if (!move) return;
+  // Name the turn as you held the cube when you made it — before the turn can
+  // change the hold (a slice's second half, or a switch of block).
+  const shown = state.mode === 'solve' ? disp([move])[0] : move;
   state.cube = applyMove(state.cube, move);
   state.history.push(move);
   state.assist = survivingAssist();
@@ -773,6 +800,7 @@ function step(move: Move3x3) {
     // finished state; gb/ro already pinned it at scramble time. No per-move axis work.
     state.movesThisStep.push(move);
     state.movesThisStepTs.push(Date.now());
+    state.movesShown.push(shown);
     if (state.solveStartMs == null) state.solveStartMs = Date.now(); // start timer on first move
     state.identify = null; // find-the-piece prompts are pre-solve scaffolding — first turn ends them
   }
@@ -794,6 +822,7 @@ function afterLearnMove() {
       state.stepStartCube = state.cube;
       state.movesThisStep = [];
       state.movesThisStepTs = [];
+      state.movesShown = [];
       state.placementIdx = null;
       state.placementPinned = false;
       state.handFrame = 0; // a new step starts held the usual way, centres home
@@ -853,6 +882,7 @@ function afterChange() {
       state.stepStartCube = state.cube;
       state.movesThisStep = [];
       state.movesThisStepTs = [];
+      state.movesShown = [];
       state.placementIdx = null;
       state.placementPinned = false;
       state.handFrame = 0; // a new step starts held the usual way, centres home
@@ -993,7 +1023,13 @@ function checkStepCompletion() {
       // A (rare) solver failure has no trustworthy optimal — null renders '?'.
       optimal: optimalArr ? optimalArr.length : null,
       yourMoves: [...state.movesThisStep],
+      yourShown: mergeTurns(state.movesShown),
       idealMoves: movesFromFrame(optimal, gf),
+      // The ideal starts where the step started, centres home: name it in that
+      // hold, not in whatever slice offset you finished in.
+      idealShown: is123(s)
+        ? toDisplayMoves(movesFromFrame(optimal, gf), holdFor(handBlock(s)))
+        : disp(movesFromFrame(optimal, gf)),
       case: optimalArr ? caseLabel : undefined,
     };
     // Free-EO: record both axes' optimal length + bad-edge count so the review can
@@ -1084,6 +1120,7 @@ function checkStepCompletion() {
       state.stepStartCube = state.cube;
       state.movesThisStep = [];
       state.movesThisStepTs = [];
+      state.movesShown = [];
       state.placementIdx = null;
       state.placementPinned = false;
       state.handFrame = 0; // a new step starts held the usual way, centres home
@@ -1423,6 +1460,7 @@ function beginLearnWalkthrough() {
   if (!learn) { state.status = 'Nothing to learn from here.'; render(); return; }
   state.movesThisStep = [];
   state.movesThisStepTs = [];
+  state.movesShown = [];
   state.stepDone[state.stepIndex] = false;
   state.assist = null;
   state.learn = learn;
@@ -2694,6 +2732,14 @@ function buildStepMeter(s: StepDef | null, info: { frac: number; caption: string
     !s ? ''
     : conceal ? 'hidden until review — counting the bad edges is the skill'
     : `${info.caption}${ideal != null ? ` · ideal ${ideal}` : ''}`));
+  // What the app thinks you've turned, in your hands' names — the last few only.
+  const turns = mergeTurns(state.movesShown);
+  if (turns.length) {
+    const list = el('div', 'movelist live-turns');
+    if (turns.length > 16) list.appendChild(el('span', 'tok subtle', '…'));
+    for (const t of turns.slice(-16)) list.appendChild(el('span', 'tok', t));
+    wrap.appendChild(list);
+  }
   return wrap;
 }
 
@@ -2909,8 +2955,10 @@ function buildRouteComparison(r: NonNullable<State['lastResult']>, yoursLabel: s
     b.appendChild(list);
     return b;
   };
-  cmp.appendChild(box(yoursLabel, `${r.used}`, disp(simplifyMoves(r.yourMoves)), 'yours'));
-  cmp.appendChild(box('ideal', `${r.optimal ?? '?'}`, disp(r.idealMoves), 'ideal'));
+  // Your turns as you made them (named in your hold at the time); older results
+  // without them fall back to renaming the whole solve in today's frame.
+  cmp.appendChild(box(yoursLabel, `${r.used}`, r.yourShown ?? disp(simplifyMoves(r.yourMoves)), 'yours'));
+  cmp.appendChild(box('ideal', `${r.optimal ?? '?'}`, r.idealShown ?? disp(r.idealMoves), 'ideal'));
   return cmp;
 }
 

@@ -222,6 +222,17 @@ the one thing **Hint** charges a rung for. The number lands in the review as
 - **Timed** — a timer runs from your first solve move to completion, with
   moves and TPS in the review. Same detection, different emphasis.
 
+## What the app thinks you turned
+
+While you solve, the moves the app has received are listed under the step meter
+(the last 16), and the review's **your solution** shows the whole lot. Each turn is
+named the way you were holding the cube when you made it — so with yellow on top,
+turning the white face reads as **D** — and quarter turns the cube reports one at a
+time are written the usual way (R R reads **R2**). On the Roux 1×2×3 trainers an
+**M** you turn reads as **M**, not the R L′ the cube actually sends, and the moves
+after it are named as your hands now see the cube. (A wide **r** still reads as the
+L it is reported as.)
+
 ## Help while solving
 
 Help is a **ladder with one button**, from least to most revealing. Press **Hint**

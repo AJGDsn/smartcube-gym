@@ -130,18 +130,21 @@ export function isSlicePair(a: Move3x3, b: Move3x3, fb: Cube3x3Mask): boolean {
   return (faces === own + OPPOSITE[own] || faces === OPPOSITE[own] + own) && (quarter(a) + quarter(b)) % 4 === 0;
 }
 const SLICES = ['M', "M'", 'M2'] as Move3x3[];
-/** The hand frame after a slice pair: `before` is the cube ahead of the pair,
- *  `after` the cube now. Held with the block bottom-left, a slice through its axis
- *  is an M in the hand's own names. Unchanged if no frame fits. */
-export function reholdAfterSlice(before: Cube3x3, after: Cube3x3, fb: Cube3x3Mask, prev: number): number {
+/** The hand frame after a slice pair, and the slice you turned: `before` is the
+ *  cube ahead of the pair, `after` the cube now. Held with the block bottom-left,
+ *  a slice through its axis is an M in the hand's own names. Unchanged (and no
+ *  slice) if no frame fits. */
+export function reholdAfterSlice(
+  before: Cube3x3, after: Cube3x3, fb: Cube3x3Mask, prev: number,
+): { frame: number; slice: Move3x3 | null } {
   const H = holdFor(fb);
   const shown = applyMoves(before, [...FRAMES[prev], ...H] as Move3x3[]);
   const turned = SLICES.map((s) => faceletString(applyMove(shown, s)));
   for (const g of framesFor(fb)) {
-    const view = rotatedFacelets(after, [...(FRAMES[g] as RotationMove[]), ...H]);
-    if (turned.includes(view)) return g;
+    const k = turned.indexOf(rotatedFacelets(after, [...(FRAMES[g] as RotationMove[]), ...H]));
+    if (k >= 0) return { frame: g, slice: SLICES[k] };
   }
-  return prev;
+  return { frame: prev, slice: null };
 }
 
 // --- the Roux second block --------------------------------------------------------
