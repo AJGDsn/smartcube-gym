@@ -679,7 +679,7 @@ re-hold → 1289, always reconsider → 187).
   every frame unbounded (~4 s at a finish); now bounded by the best so far (6–13 ms
   warm; the first finish of a session still builds 24 tables, ~2 s, as before).
 
-## Done (2026-11-09) — Phase 2: first-block structures (branch `roux/fb-structures`, not merged)
+## Done (2026-11-09) — Phase 2: first-block structures (merged to `main` 2026-11-25)
 Run unattended at the master thread's request, after Ian's "Yes to SmartCube". Branch
 only: nothing merged, pushed or deployed. Pure modules + harnesses; no UI change.
 
@@ -826,7 +826,7 @@ the key in localStorage) and for one plan covering everything outstanding.
 6. Guard: a harness that applies slice-bearing routes as the cube reports them and
    requires the target done, plus hold-check extended to r.
 
-### Phase 2 — first-block structures (prerequisite 2) — BUILT 2026-11-09 on `roux/fb-structures` (see Done)
+### Phase 2 — first-block structures (prerequisite 2) — BUILT 2026-11-09, merged 2026-11-25 (see Done)
 1. Detect the flowchart's features on any cube state: corner+edge pairs, edge+centre
    pairs, 3×1 D lines, 3×1 E lines, disjointed pairs (one move from joined). Each is
    checked against a brute-force oracle harness at 0 mismatches.
