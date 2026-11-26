@@ -16,7 +16,14 @@
 //    block's hold — to BE the cube in hand, sticker for sticker, after every turn.
 //    Hint names are then right too, by 3. And the move list names every turn as
 //    you made it: U, R, R2 under their own names, a slice pair shown as one M.
-// 5. Following the app's own outer-turn routes at a human pace never re-holds.
+//    Wide turns (r) on a route the app showed are read as r (route-aware, main.ts
+//    followRoute: r reports as a lone L); the held record (main.ts movesHeld — what
+//    grading counts and replays) replays to the cube in hand, one token per turn.
+// 5. Following the app's own routes, which now use M and r (notation.ts), turned
+//    on the physical cube hint by hint or read off Show the route in one go (its
+//    slices turned slowly, so only the route can name them): the picture stays the cube in hand,
+//    every move is named as the route named it, and the target is reached — for
+//    first blocks (outer turns + M + r) and second blocks (R r U M).
 //
 // Usage: npx tsx scripts/hold-check.ts
 
@@ -28,8 +35,11 @@ import { humanSolveFromState } from '../src/human-solve.ts';
 import { MASK_123_LEFT, MASK_123_RIGHT, side123Masks } from '../src/blocks.ts';
 import { FRAMES, movesToFrame } from '../src/frame.ts';
 import {
-  ALL_FB, CN_RUNGS, HOLDS, HOLD_ROTATION, SLICE_PAIR_MS, blockHoldLabel, bothBlocks, holdFor, isSlicePair, reholdAfterSlice, rungBlocks,
+  ALL_FB, CN_RUNGS, HOLDS, HOLD_ROTATION, SLICE_PAIR_MS, blockHoldLabel, bothBlocks, holdFor, isSlicePair, reholdAfterSlice,
+  resolveSolver, rungBlocks,
 } from '../src/hold.ts';
+import { cfgInFrame, inFrame, isTargetSolved, movesFromFrame, solveInFrames } from '../src/frame.ts';
+import { ROUX_HELD, ROUX_SB_HELD, followTurn, isWide, renameMove, startFollow, unrename, type Follow } from '../src/notation.ts';
 import { orientLabel, rotateHighlight, rotatedFacelets, toDisplayMoves } from '../src/orient.ts';
 import { TRAINERS } from '../src/steps.ts';
 
@@ -138,27 +148,60 @@ class Tracker {
   h = 0; moves: Move3x3[] = []; ts: number[] = []; paired = -1;
   /** main.ts movesShown: each turn named in the hold before it, a slice pair relabelled. */
   shown: string[] = [];
+  /** main.ts movesHeld: the same turns positional, named for the model at the start. */
+  held: Move3x3[] = [];
   constructor(readonly fb: Cube3x3Mask) {}
+  /** main.ts state.follow: the route on screen, from assist() (a hint or Show the
+   *  route), named for the model at `base`. */
+  f: Follow | null = null;
+  follow(base: Cube3x3, route: Move3x3[]) { this.f = startFollow(base, route, this.h, this.shown.length); }
   see(cube: Cube3x3, m: Move3x3, t: number) {
-    this.shown.push(toDisplayMoves([m], [...(FRAMES[this.h] as RotationMove[]), ...holdFor(this.fb)])[0]);
+    const D = [...(FRAMES[this.h] as RotationMove[]), ...holdFor(this.fb)];
+    this.shown.push(toDisplayMoves([m], D)[0]);
+    this.held.push(renameMove(m, FRAMES[this.h]));
     this.moves.push(m); this.ts.push(t);
     const n = this.moves.length;
+    // main.ts followRoute, replayed.
+    const f = this.f;
+    if (f) {
+      const before = f.done;
+      const r = followTurn(f, cube);
+      if (!r) this.f = null;
+      else {
+        this.h = r.hand;
+        if (f.done !== before) {
+          if (r.finished) {
+            const k = this.shown.length - f.since;
+            this.shown.splice(f.since, k, toDisplayMoves([r.finished], [...(FRAMES[f.hand] as RotationMove[]), ...holdFor(this.fb)])[0]);
+            this.held.splice(f.since, k, renameMove(r.finished, FRAMES[f.hand]));
+          }
+          this.paired = n - 1;
+          f.since = this.shown.length;
+        }
+      }
+    }
     if (n < 2 || n - 2 <= this.paired || this.ts[n - 1] - this.ts[n - 2] > SLICE_PAIR_MS) return;
     const [a, b] = [this.moves[n - 2], this.moves[n - 1]];
     if (!isSlicePair(a, b, this.fb)) return;
     const r = reholdAfterSlice(applyMove(applyMove(cube, inv(b)), inv(a)), cube, this.fb, this.h);
     this.h = r.frame;
     this.paired = n - 1;
-    if (r.slice) this.shown.splice(-2, 2, r.slice);
+    if (r.slice) {
+      this.shown.splice(-2, 2, r.slice);
+      this.held.splice(-2, 2, unrename([r.slice], holdFor(this.fb))[0]);
+    }
   }
 }
-// Second-block moves a Roux solver makes, none touching the left block. Wide turns
-// (r) are left out on purpose: a lone reported L can't be told from an L yet.
-const SB_MOVES = ['U', 'U2', "U'", 'R', 'R2', "R'", 'M', 'M2', "M'"] as Move3x3[];
+// Second-block moves a Roux solver makes, none touching the left block. A wide turn
+// is read as one only when the app suggested it (a lone reported L is otherwise an
+// L), so each turn here is made as a hint-follower would: the hint on screen is the
+// turn itself.
+const SB_MOVES = ['U', 'U2', "U'", 'R', 'R2', "R'", 'M', 'M2', "M'", 'r', 'r2', "r'"] as Move3x3[];
 const FB_CFG = { moveSet: TURNS, pruningDepth: 4, depthLimit: 12 };
-let turns = 0, offsetTurns = 0, slicesSeen = 0, named = 0;
+let turns = 0, offsetTurns = 0, slicesSeen = 0, widesSeen = 0, named = 0;
 for (const fb of ALL_FB) {
   for (let rep = 0; rep < 3; rep++) {
+    const turnsBefore = turns;
     // A scramble with this first block built, as the drill serves it.
     let model = applyMoves(newSolved(), scramble(16));
     const sol = solveFromState(model, fb, FB_CFG);
@@ -167,6 +210,7 @@ for (const fb of ALL_FB) {
     check(isMaskSolvedState(model, fb), 'built block is not solved');
     const H = holdFor(fb);
     let inHand = applyMoves(model, H as Move3x3[]); // the solver picks it up, block bottom-left
+    const model0 = model;
     const tr = new Tracker(fb);
     let clock = 0;
     for (let k = 0; k < 25; k++) {
@@ -178,6 +222,7 @@ for (const fb of ALL_FB) {
       if (m[0] === 'M') { slicesSeen++; check(evs.length === 2 && isSlicePair(evs[0], evs[1], fb), `${m} reported as ${evs.join(' ')}`); }
       clock += 400; // human pace between turns; a slice's two halves land 20 ms apart
       const before = tr.shown.length;
+      tr.follow(model, [unrename([m], [...FRAMES[tr.h], ...H])[0]]); // the hint on screen is this turn
       evs.forEach((t, j) => { model = applyMove(model, t); tr.see(model, t, clock + j * 20); });
       // The app names the turn exactly as you made it — one token, your hand's name.
       named++;
@@ -185,6 +230,10 @@ for (const fb of ALL_FB) {
         `${blockHoldLabel(fb)}: you turned ${m}, the app shows ${tr.shown.slice(before).join(' ')}`);
       check(model.encode() === next.encode(), 'reported turns do not reach the cube');
       turns++;
+      if (m[0] === 'r') widesSeen++;
+      // The held record replays to the cube in hand, one token per turn you made.
+      check(tr.held.length === turns - turnsBefore && rotatedFacelets(applyMoves(model0, tr.held), H) === faceletString(inHand),
+        `${blockHoldLabel(fb)} after ${m}: the held record ${tr.held.join(' ')} is not what you turned`);
       if (tr.h !== 0) offsetTurns++;
       check(rotatedFacelets(model, [...(FRAMES[tr.h] as RotationMove[]), ...H]) === faceletString(inHand),
         `${blockHoldLabel(fb)} after ${m}: the picture is not the cube in hand (frame ${tr.h})`);
@@ -192,30 +241,78 @@ for (const fb of ALL_FB) {
   }
 }
 
-// --- 5. following the app's own routes never re-holds -----------------------------
-// The routes are outer turns (they imitate M with the block's face). Turned at a
-// human pace — reading each hint — they must leave the hold alone, even where a
-// route has R and L' back to back.
+// --- 5. following the app's own routes --------------------------------------------
+// The routes use M and r now. A hint-follower turns each route move on the physical
+// cube (a slice's halves 20 ms apart, otherwise reading-pace), the hint on screen
+// being the route's next move as the app would show it from where the cube is now.
+// The picture must stay the cube in hand, each move must be shown as the route
+// named it, the held record must be the route, and the target must be reached.
+// And re-planned from the live cube part-way — after slices have re-held the hands,
+// as a hint is — the route must still be the step's own moves in the hands' names
+// (the second block's R r U M are other model faces after an M: hold.ts
+// resolveSolver takes the hand frame).
 const SB_STEP = TRAINERS.find((t) => t.id === 'b123R')!.steps[0];
-let quiet = 0, backToBack = 0;
-for (let t = 0; t < 16; t++) {
+const FB_STEP = TRAINERS.find((t) => t.id === 'b123L')!.steps[0];
+let routeTurns = 0, routeSlices = 0, routeWides = 0, routesDone = 0, replans = 0, replansOffset = 0;
+for (let t = 0; t < 24; t++) {
   const fb = ALL_FB[t % 8];
+  const second = t % 2 === 1;
   let model = applyMoves(newSolved(), scramble(16));
-  const built = solveFromState(model, fb, { ...SB_STEP.solver, depthLimit: 16 });
-  if (!built) continue;
-  model = applyMoves(model, built);
-  const route = humanSolveFromState(model, bothBlocks(fb), SB_STEP.solver);
+  if (second) {
+    const built = solveFromState(model, fb, { ...FB_CFG, depthLimit: 16 });
+    if (!built) continue;
+    model = applyMoves(model, built);
+  }
+  const target = second ? bothBlocks(fb) : fb;
+  const cfg = resolveSolver((second ? SB_STEP : FB_STEP).solver, fb);
+  const route = humanSolveFromState(model, target, cfg);
+  check(!!route, `${blockHoldLabel(fb)}: no ${second ? 'second' : 'first'}-block route`);
   if (!route) continue;
+  const H = holdFor(fb);
+  const model0 = model;
+  let inHand = applyMoves(model, H as Move3x3[]);
   const tr = new Tracker(fb);
+  const want = toDisplayMoves(route, H); // the route in your hands' names, all the way through
+  let clock = 0;
+  // Half the routes are shown once and followed from the screen (Show the route);
+  // half hint by hint. Slices are turned slowly in the first kind (300 ms between
+  // halves), so only the route can name them.
+  const whole = t % 4 < 2;
+  if (whole) tr.follow(model, route);
   route.forEach((m, i) => {
-    if (i > 0 && isSlicePair(route[i - 1], m, fb)) backToBack++;
-    model = applyMove(model, m);
-    tr.see(model, m, i * 600);
-    quiet++;
-    check(tr.h === 0, `${blockHoldLabel(fb)}: re-held following the route at ${m}`);
+    const d = want[i];
+    inHand = applyMove(inHand, d);
+    const evs = reported(model, toModel(inHand));
+    if (!whole) tr.follow(model, [unrename([d], [...FRAMES[tr.h], ...H])[0]]);
+    clock += 600;
+    evs.forEach((ev, j) => { model = applyMove(model, ev); tr.see(model, ev, clock + j * (whole ? 300 : 20)); });
+    routeTurns++;
+    if ('MES'.includes(m[0])) routeSlices++;
+    if (isWide(m)) routeWides++;
+    check(rotatedFacelets(model, [...(FRAMES[tr.h] as RotationMove[]), ...H]) === faceletString(inHand),
+      `${blockHoldLabel(fb)}: following ${route.join(' ')}, the picture is not the cube in hand at ${d}`);
+    if (i < route.length - 1 && !isTargetSolved(model, target)) {
+      const step = second ? SB_STEP : FB_STEP;
+      // Planned as main.ts coachRoute does: in the frame the target is closest to
+      // (where the first block now sits, after the slices), then named back.
+      const cfg = resolveSolver(step.solver, fb, tr.h);
+      const g = solveInFrames(model, target, cfg)?.frame ?? 0;
+      const inG = humanSolveFromState(inFrame(model, g), target, cfgInFrame(cfg, g));
+      const again = inG && movesFromFrame(inG, g);
+      const named = again ? toDisplayMoves(again, [...(FRAMES[tr.h] as RotationMove[]), ...H]) : [];
+      const allowed = new Set<string>(second ? ROUX_SB_HELD : ROUX_HELD);
+      replans++; if (tr.h) replansOffset++;
+      check(!!again && named.every((x) => allowed.has(x)),
+        `${blockHoldLabel(fb)} hand ${tr.h}: re-planned ${named.join(' ')} leaves ${second ? 'R r U M' : 'the Roux set'}`);
+    }
   });
+  check(tr.shown.join(' ') === want.join(' '), `${blockHoldLabel(fb)}: route ${want.join(' ')} shown as ${tr.shown.join(' ')}`);
+  check(tr.held.join(' ') === route.join(' '), `${blockHoldLabel(fb)}: route ${route.join(' ')} held as ${tr.held.join(' ')}`);
+  check(isTargetSolved(model, target), `${blockHoldLabel(fb)}: following ${route.join(' ')} as reported doesn't reach the target`);
+  check(rotatedFacelets(applyMoves(model0, tr.held), H) === faceletString(inHand), 'held replay');
+  routesDone++;
 }
 
-console.log(`hold check — ${HOLDS.length} holds, ${ALL_FB.length} blocks on the ladder, ${turns} second-block turns in hand (${offsetTurns} with the centres off), ${slicesSeen} slices, ${named} turns named as made, ${quiet} route turns held still (${backToBack} back-to-back R/L pairs), ${checks} checks`);
+console.log(`hold check — ${HOLDS.length} holds, ${ALL_FB.length} blocks on the ladder, ${turns} second-block turns in hand (${offsetTurns} with the centres off), ${slicesSeen} slices, ${widesSeen} wide turns from a shown route, ${named} turns named as made, ${routesDone} app routes followed (${routeTurns} moves: ${routeSlices} slices, ${routeWides} wide; ${replans} re-plans, ${replansOffset} with the centres off), ${checks} checks`);
 console.log(`mismatches ${mismatches}`);
 if (mismatches) process.exitCode = 1;

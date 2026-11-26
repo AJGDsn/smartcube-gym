@@ -769,9 +769,123 @@ Following the flowchart's pick vs the best approach: mean +0.62; as good in 55%,
 - **Following the flowchart's pick costs +0.62** against the best approach: as good in
   55%, within 1 in 84%, within 2 in 99%. Good, not perfect — worth teaching as the
   default with "check the other approach when it's close".
-- **Caveat: HTM, outer turns only.** Routes don't use M or r until Phase 1; with them,
+- **Rerun with M and r (2026-11-26, Phase 1):** STM, outer turns + M + r, same 120
+  scrambles. Block optimum 6.47 (was 6.61 HTM). Approaches: F2L-style 8.13 (29%),
+  pair-first 7.63 (53%), line-block 7.55 (51%), E-line 7.98 (32%), line + line 7.59
+  (48%). Best approach +0.45 over the optimum (equal 61%); flowchart pick +0.62 (as
+  good 53%, within 1 88%, within 2 98%). Each approach is ~0.15–0.2 shorter, and the
+  ranking is unchanged: M and r help a little everywhere, line + line no more than
+  the rest. `fb-flowchart-measure.ts` now counts this way by default (`outer` for the
+  old count).
+- **Caveat (historical): HTM, outer turns only.** Routes don't use M or r until Phase 1; with them,
   counts drop and the ranking between approaches may shift (line + line in particular
   is a u2 / r-heavy approach). Rerun after Phase 1.
+
+## Done (2026-11-26) — Phase 1: routes that move like Roux (branch `roux/moves`)
+Ian: "Start phase 1". Branch only — not merged, pushed or deployed. **Needs a cube in
+hand before merging** (hand tracking; the test list is at the end).
+
+- **`src/notation.ts` — one vocabulary between routes and the cube.** Every translation
+  between positional turns (what the hands do: R, M, r, named by position) and
+  reported turns (outer faces only, named by centre — M arrives as R L′ and re-holds
+  the cube by x′, r as a lone L and x) goes through it, read off the engine's own
+  permutations:
+  - `renameMove`/`rename`/`unrename` — the same turn in a re-held frame, slices and
+    wide turns included. **The engine's `translateMoves` misnames slices** under
+    half-turn rotations (M under y2 stays M; it should read M′): 36 of 45×24 cases,
+    484 in the oracle's sweep. `orient.ts` toDisplayMoves/toModelMoves and
+    `frame.ts` movesToFrame/movesFromFrame now go through notation.ts (identical on
+    outer turns — checked, 0 differences).
+  - `decompose`, `toReported` (a route → the reported turns per move and the hand
+    frame after each), `partialReports` (half an M, a quarter of R2 — on the way,
+    not off it), `walkReported`, and `startFollow`/`followTurn` (route following,
+    below).
+  - `ROUX_HELD` (outer + M + r) and `ROUX_SB_HELD` (R r U M), named as held with the
+    first block bottom-left; `heldMoveSet` names them for the model.
+- **Solver.** `StepSolverConfig` gains `heldMoves` (and `view`, the model → hands
+  rotation). The 1×2×3 family searches `ROUX_HELD` (pd4, depth 12); `b123R` searches
+  `ROUX_SB_HELD` at **pd7**, depth 16. `hold.ts resolveSolver(cfg, fb, hand)` renames
+  them for the model against the block held and the **hand frame**: after an M the
+  hands' U is another model face, so R r U M are other model moves. (Found in the
+  browser: a re-planned second block contained F turns before the fix. The full set
+  is the same in every hand frame; the second-block set is not.) `frame.ts
+  cfgInFrame` renames a set per searched frame. `main.ts solverFor(s, mask, hand)`
+  at every call site: 0 from the step's start (grading, planning verdict, scramble
+  generation), `state.handFrame` from the live cube (hints, routes, walkthrough,
+  lookahead). Scramble builds (b123R's pre-built first block) stay outer turns — the
+  scramble strip is checked against reported turns.
+  - Measured (20 scrambles, white-bottom/blue-left): first block ~0.1 s table,
+    ~20 ms solve, mean 6.55 STM (outer: 6.65 HTM, ~40 ms). Second block: R r U M at
+    pd5 burnt the 1e6-node budget (a null, worst 9 s); pd7 solves every case, ~10 ms
+    mean, 75 ms worst, mean 9.9 STM. **The b123R "no route" bug is gone** (was 13/30).
+  - **Table-cache bug fixed** in `engine-api.ts`: the key used the move set's
+    *length*, so two different 24-move sets would have shared a pruning table.
+- **Counting in STM.** `state.movesHeld`: each turn as your hands made it, positional,
+  named for the model at the step's start (`rename(o, FRAMES[hand])`; a timed slice
+  pair becomes one M via `unrename(slice, hold)`; a route move finished on a shown
+  route becomes that move). Grading's `used`, the live meter and the pattern replay
+  of "yours" read it (`mergeTurns(movesHeld).length`) — the same as HTM over
+  reported turns for every other step. The pattern replay now replays the hands'
+  moves (an M is a slice), in the frame that replay finishes in.
+- **Route-aware hand frame (`followRoute`).** When a route is shown (a hint's next
+  move, More help, Show the route) `state.follow` walks the cube along it as the cube
+  reports it. A turn that finishes a route move relabels the turns it took as that
+  move (an r that reported as L, a slow M, R R for R2) and takes the route's hold;
+  leaving the route drops it. This closes the wide-turn gap left by `bf82bcb` for
+  shown routes. Timing still catches slices off-route. **Not covered:** an r you make
+  with no route on screen (reported exactly as an L).
+- **Walkthrough.** Learn walks the route as reported (`walkReported`), re-holds the
+  picture on its own slices and wide turns (`learn.hands`), and names the route in
+  the hold it was planned in (`dispAt`). The old face-token `progressOver` couldn't
+  see an M and was removed.
+- **Typed moves** (the `gym.apply` test hook) go in as reported turns, so a typed M
+  is R L′ in one instant (re-holds like a real slice) rather than a slice applied to
+  the model, which moved its centres.
+- **human-solve:** comfort (the D/B penalty) is judged in the hands' names via
+  `cfg.view`. The build-then-extend **seam fix** prefers a stage-2 route that doesn't
+  open on the layer stage 1 ended on (it used to read "U′ U", undoing the move that
+  finished the milestone); `joinRoutes` merges only if every route does. The taught
+  route is also **cut where the target is done in any frame** (`coachRoute`) — it
+  could end with an L that only spins the finished block about its axis.
+- **Guards** (all at 0 mismatches):
+  - `scripts/notation-check.ts` — **new, written by a Fable 5.2 subagent** as an
+    independent oracle (geometry: 54 stickers as position + normal, layer turns as
+    quarter-turns of space; it never read notation.ts's function bodies). 144,824
+    checks; 16/16 mutants caught (e.g. toReported never carrying the rotation:
+    43,727). It found my brief's statement of toReported wrong (the route is in the
+    model's names at its start, not the hands') and gated on the module's reading,
+    which is how main.ts calls it.
+  - `hold-check.ts` — the replayed tracker now includes `followRoute` and
+    `movesHeld`; r turns in hand; 24 of the app's own routes (FB and SB, half shown
+    once with slow slices, half hint by hint) followed on the physical cube to the
+    target, the picture equal to the cube in hand throughout, each move shown and
+    held as the route named it; 211 live re-plans (112 with the centres off) must
+    stay in the step's move set. Mutants: no route following 3,490 (and the
+    shown-route variant: picture ≠ hand), slice held under the wrong name 1,215.
+  - `human-solve-blocks-check.ts` — no same layer twice in a row (the seam; the old
+    behaviour is caught, 2–7 per run) and a Roux 1×2×3 family through resolveSolver.
+  - `frame-check.ts` / `slice-scan.ts` resolve held moves (b123R's raw config is
+    outer turns at pd7 — building that table ran `npm run check` out of memory).
+- **Browser-verified** (dev server, `gym` hook): b123R route "R r2 U R M2 U r′ U R′"
+  in 60 ms where there was none; the walkthrough follows it through both r's and the
+  M2 to completion; six b123R and eight b123L routes followed straight off Show the
+  route all complete, routes ending on their last move; the review reads e.g. "your
+  solution 9 · ideal 9 — optimal" with r's named.
+- **Open, for Ian:**
+  - Taught routes are ~3.4 moves over the optimum (~3.9 before Phase 1, outer
+    turns) — the build-then-extend design, not Phase 1. Phase 3's per-approach
+    routes replace it for the course.
+  - Comfort penalises D and B in the hands' names. Roux first blocks use B turns
+    freely; judging comfort in model names gave shorter taught routes (+2.7 vs +3.4)
+    but means nothing in a block-bottom-left hold. What's awkward for you in FB?
+  - Course 1×2×3 bands (L1 ≤ 6 … L4 ≥ 11) now grade STM; the optimum dropped
+    ~0.1–0.15, so the bands are effectively unchanged.
+- **Test with the cube:** (1) b123R: Hint → More help until a next move is an r; make
+  it; the move list should read r, the caption "centres off by a slice turn", and the
+  next hint should be R/r/U/M. (2) Show the route on b123R and follow it all the way,
+  slices at your normal speed — the list should match the route move for move. (3) An
+  r on your own (no route shown) will read as L — expected. (4) Walk it through on a
+  route with an M or r.
 
 ## Plan of action (2026-11-05) — Roux moves, the first-block course, and an optional AI coach
 Ian asked to revisit AI coaching (removed in `6090c39`, "Remove the AI coaching hook";
@@ -811,7 +925,7 @@ the key in localStorage) and for one plan covering everything outstanding.
 - The 2×2×2 that wasn't recognised: did the screen show the block finished?
 - Colour-neutrality rungs: cumulative (as built), or each practised on its own?
 
-### Phase 1 — routes that move like Roux (prerequisite 3)
+### Phase 1 — routes that move like Roux (prerequisite 3) — BUILT 2026-11-26 on `roux/moves` (see Done)
 1. A Roux move set for the 1×2×3 family (outer turns + M + r; SB drill U R r M).
    Check pruning cost at the current depths. `src/engine/` stays untouched.
 2. Count in STM for this family: ideal, course bands, grading, so your M costs one move.

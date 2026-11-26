@@ -20,6 +20,7 @@ import { blockEoPrereq, blockEoTarget } from './block-eo.ts';
 import type { PatternName } from './patterns.ts';
 import { MOVESETS, type Cube3x3Mask, type Move3x3, type StepSolverConfig } from './engine-api.ts';
 import { MASKS } from './engine/puzzles/cube3x3/index.ts';
+import { ROUX_HELD, ROUX_SB_HELD } from './notation.ts';
 
 export type Category = 'Course' | 'EO' | 'Blocks';
 export type BlockFamily = '222' | '223' | '123';
@@ -76,11 +77,22 @@ const BLOCK_MOVES = MOVESETS.RUFLDB;
 // multi-second searches. At pd5 the same set solves with 0 nulls and ~130ms
 // average, for a ~1.6s one-off table build per mask. 222/123 measured clean
 // at pd4 (0 nulls, ms-scale searches, ~50-100ms tables).
+//
+// Roux 1×2×3s search the moves a Roux solver makes (notation.ts): outer turns plus
+// M and r for the first block, R r U M for the second. Held names, renamed for the
+// model per block (hold.ts resolveSolver). Measured 2026-11-26 on 20 random
+// scrambles, white-bottom / blue-left: first block pd4 builds its table in ~0.1 s
+// and solves in ~20 ms (mean 6.55 STM; outer turns only were 6.65 HTM, ~40 ms).
+// Second block on R r U M: pd5 still burnt the 1e6-node budget (one case found
+// nothing, worst 9 s); pd7 solves every case, ~10 ms mean, 75 ms worst, mean 9.9
+// STM, on a ~0.1 s table. Outer turns at the old depth 12 found no second block in
+// 13 of 30 served cases.
 const SOLVER: Record<BlockFamily, StepSolverConfig> = {
   '222': { moveSet: BLOCK_MOVES, pruningDepth: 4, depthLimit: 11 },
   '223': { moveSet: BLOCK_MOVES, pruningDepth: 5, depthLimit: 14 },
-  '123': { moveSet: BLOCK_MOVES, pruningDepth: 4, depthLimit: 12 },
+  '123': { moveSet: BLOCK_MOVES, heldMoves: ROUX_HELD, pruningDepth: 4, depthLimit: 12 },
 };
+const SOLVER_ROUX_SB: StepSolverConfig = { moveSet: BLOCK_MOVES, heldMoves: ROUX_SB_HELD, pruningDepth: 7, depthLimit: 16 };
 
 // --- block steps ---
 const STEP_222: StepDef = {
@@ -241,10 +253,11 @@ const STEP_123_RIGHT_DRILL: StepDef = {
   blurb: 'Build the right 1×2×3 with the left block already solved (Roux second block).',
   candidateMasks: [MASK_123_LR], canonicalMask: MASK_123_LR, prereqMask: MASK_123_LEFT,
   hold: 'Left 1×2×3 is already built; build the right one without disturbing it.',
-  solver: SOLVER['123'],
+  solver: SOLVER_ROUX_SB,
 };
 
-// --- course ladders (difficulty by optimal HTM to build the block) ---
+// --- course ladders (difficulty by optimal moves to build the block: HTM, or STM
+// for the Roux 1×2×3, whose routes use M and r) ---
 // The 2×2×2 course is the curated technique curriculum: lessons keyed to the
 // Lars Petrus pattern vocabulary (each opens with seeded examples from
 // src/cases.ts, then generates same-technique practice). The final level is

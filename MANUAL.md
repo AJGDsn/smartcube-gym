@@ -212,13 +212,19 @@ the one thing **Hint** charges a rung for. The number lands in the review as
 - **2×2×3** — build a 2×2×3 anywhere, any route.
 - **2×2 → 2×2×3** — the scramble pre-builds a 2×2×2; extend it.
 - **1×2×3 L** — a Roux/LEOR first block; which blocks count is set in Settings ›
-  Roux 1×2×3 · first blocks (default: white bottom, blue left).
-- **1×2×3 R (L solved)** — the Roux second block, left block pre-built.
+  Roux 1×2×3 · first blocks (default: white bottom, blue left). Hints, routes
+  and the ideal use the moves a Roux solver makes: outer turns plus **M** and
+  **r**.
+- **1×2×3 R (L solved)** — the Roux second block, left block pre-built. Hints,
+  routes and the ideal use only **R, r, U and M**, so they never disturb the
+  first block.
 
 ## Training modes
 
 - **Efficiency** — the default. Your move count (in HTM: a physical double turn
   counts as one) against the solver's ideal for the position you actually had.
+  On the Roux 1×2×3 trainers both sides count in STM: an **M** or an **r** is one
+  move, for you and for the ideal.
 - **Timed** — a timer runs from your first solve move to completion, with
   moves and TPS in the review. Same detection, different emphasis.
 
@@ -230,8 +236,15 @@ named the way you were holding the cube when you made it — so with yellow on t
 turning the white face reads as **D** — and quarter turns the cube reports one at a
 time are written the usual way (R R reads **R2**). On the Roux 1×2×3 trainers an
 **M** you turn reads as **M**, not the R L′ the cube actually sends, and the moves
-after it are named as your hands now see the cube. (A wide **r** still reads as the
-L it is reported as.)
+after it are named as your hands now see the cube.
+
+A wide **r** is harder: the cube reports it exactly like an L. So the app reads an
+r as an r when it is **on a route it showed you** — a hint's next move, Show the
+route, or a walkthrough — and you make it. Following a shown route, the app keeps
+your place in it until you turn off it, so an r halfway down the list still reads
+as r, and so does a slow M. An r you make on your own, with no route on screen,
+reads as the L it is reported as, and the hint names are then a slice turn off
+until you undo it.
 
 ## Help while solving
 
@@ -365,9 +378,8 @@ review — mid-solve they're just moves.
   bottom-left, named by the block's own colours ("hold white-bottom / blue-left").
   The second-block drill pre-builds one of the rung's first blocks at random.
   After an **M** (M′, M2) the view and the hint names follow your hands — the app
-  spots a slice from its two halves arriving together. A wide **r** is not spotted
-  yet (it is reported exactly like an L), so after an r the hint names are a slice
-  turn off until you undo it.
+  spots a slice from its two halves arriving together. A wide **r** is spotted only
+  on a route the app showed you (see *What the app thinks you turned*).
 - **Full EO · side axis** — Detect (default: solve either side, the app reads
   which off the finished cube), or pin Blue front / Red front to drill one axis
   deliberately.

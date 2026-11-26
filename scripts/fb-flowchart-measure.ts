@@ -5,15 +5,19 @@
 //   1. How often each feature is free — the video counted 88% edge+centre pair,
 //      66% corner+edge pair, 96% either, over 50 of his own solves.
 //   2. Which flowchart branch fires, for the fixed white-bottom / blue-left block.
-//   3. Move counts (HTM, outer turns): the block's optimum, the best staged route
+//   3. Move counts: the block's optimum, the best staged route
 //      for each approach, and what following the flowchart's pick costs against
 //      the best approach available.
 //
-// Usage: npx tsx scripts/fb-flowchart-measure.ts [scrambles=300] [lengthScrambles=120]
+// Section 3 counts in STM with the Roux move set (outer turns + M + r, as the app's
+// 1×2×3 steps search since Phase 1), or in HTM over outer turns with `outer`.
+//
+// Usage: npx tsx scripts/fb-flowchart-measure.ts [scrambles=300] [lengthScrambles=120] [roux|outer]
 
 import { applyMoves, newSolved, type Move3x3 } from '../src/engine-api.ts';
 import { solveInFrames } from '../src/frame.ts';
-import { blockHoldLabel, rungBlocks, type CnRung } from '../src/hold.ts';
+import { blockHoldLabel, resolveSolver, rungBlocks, type CnRung } from '../src/hold.ts';
+import { TRAINERS } from '../src/steps.ts';
 import {
   APPROACHES, APPROACH_LABEL, EDGE_CENTRE_IDS, PAIR_IDS, bestForApproach, flowchart, presentStructures,
   structureMasks, type Approach, type Branch,
@@ -30,7 +34,8 @@ const scramble = (n: number): Move3x3[] => {
   while (o.length < n) { const f = FACES[(rand() * 6) | 0]; if (f === l) continue; l = f; o.push(f + SUF[(rand() * 3) | 0]); }
   return o as Move3x3[];
 };
-const CFG = { moveSet: TURNS, pruningDepth: 4, depthLimit: 12 };
+const OUTER_ONLY = process.argv[4] === 'outer';
+const OUTER_CFG = { moveSet: TURNS, pruningDepth: 4, depthLimit: 12 };
 const pct = (k: number, n: number) => `${((100 * k) / n).toFixed(0)}%`;
 const scrambles = Array.from({ length: N }, () => applyMoves(newSolved(), scramble(20)));
 
@@ -70,7 +75,8 @@ for (const b of ['lineD', 'lineE', 'cornerEdge', 'edgeCentre', 'disjointed', 'fa
 }
 
 // --- 3. move counts, fixed block ---------------------------------------------------------------
-console.log(`\n## 3. Move counts (fixed ${blockHoldLabel(FB)}, HTM, outer turns, ${NL} scrambles)\n`);
+const CFG = OUTER_ONLY ? OUTER_CFG : resolveSolver(TRAINERS.find((t) => t.id === 'b123L')!.steps[0].solver, FB);
+console.log(`\n## 3. Move counts (fixed ${blockHoldLabel(FB)}, ${OUTER_ONLY ? 'HTM, outer turns' : 'STM, outer turns + M + r'}, ${NL} scrambles)\n`);
 const t0 = Date.now();
 const opt: number[] = [];
 const per: Record<Approach, number[]> = Object.fromEntries(APPROACHES.map((a) => [a, []])) as unknown as Record<Approach, number[]>;

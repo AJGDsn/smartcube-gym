@@ -39,7 +39,7 @@ import {
   type Cube3x3, type Cube3x3Mask, type Move3x3, type RotationMove, type StepSolverConfig,
 } from './engine-api.ts';
 import { MASK_123_LEFT, blockMaskFromRanges } from './blocks.ts';
-import { framesFor, inFrame, movesFromFrame, solveInFrames } from './frame.ts';
+import { cfgInFrame, framesFor, inFrame, movesFromFrame, solveInFrames } from './frame.ts';
 import { holdFor } from './hold.ts';
 import { unrotateHighlight } from './orient.ts';
 
@@ -222,14 +222,17 @@ export interface ApproachRoute {
  * then to the block. Each stage is optimal for its target, not constrained to keep
  * what came before, so it is the approach's best route as a solver plans it — the
  * route a solve following the approach would have to beat. Null if a stage has no
- * solution within the solver's depth.
+ * solution within the solver's depth. With a Roux config (hold.ts resolveSolver)
+ * the stages may use M and r; the moves are then positional — the route as the
+ * hands make it — and toReported (notation.ts) says what the cube would send.
  */
 export function bestForApproach(start: Cube3x3, fb: Cube3x3Mask, approach: Approach, cfg: StepSolverConfig): ApproachRoute | null {
   const masks = structureMasks(fb);
   let best: ApproachRoute | null = null;
   for (const { first, then } of PLAN[approach]) {
     const mask = masks[first];
-    const firsts = framesFor(mask).map((f) => ({ f, moves: solveFromState(inFrame(start, f), mask, cfg) }))
+    // cfgInFrame: a Roux move set (M, r) is renamed for each frame searched.
+    const firsts = framesFor(mask).map((f) => ({ f, moves: solveFromState(inFrame(start, f), mask, cfgInFrame(cfg, f)) }))
       .filter((x): x is { f: number; moves: Move3x3[] } => !!x.moves);
     if (!firsts.length) continue;
     const shortest = Math.min(...firsts.map((x) => x.moves.length));

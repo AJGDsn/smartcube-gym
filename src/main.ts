@@ -13,8 +13,10 @@ import {
   homePermutation,
   cubeFromFacelets,
   findBridge,
+  type Cube3x3Mask,
   type Move3x3,
   type RotationMove,
+  type StepSolverConfig,
 } from './engine-api.ts';
 import { kociembaToNet } from './resync.ts';
 import {
@@ -30,9 +32,10 @@ import { locatePieceNow, nextFocusPiece, nextTwoFocusPieces, pieceDescription, p
 import { humanSolveFromState } from './human-solve.ts';
 import { activeFramed, anchorFramed, canonicalIndexIn } from './placement.ts';
 import {
-  FRAMES, faceletToModel, framedCandidates, inFrame, isTargetSolved, movesFromFrame, movesToFrame,
+  FRAMES, cfgInFrame, faceletToModel, framedCandidates, inFrame, isTargetSolved, movesFromFrame, movesToFrame,
   solvedFrame, solveInFrames, type Framed,
 } from './frame.ts';
+import { followTurn, renameMove, reportedTurns, startFollow, toReported, unrename, walkReported, type Follow } from './notation.ts';
 import { classifyRoute, isPairJoined, PATTERN_HOW, routeRoles, type MoveRole, type PatternName } from './patterns.ts';
 import { lessonSeedsFor, seedsFor } from './cases.ts';
 import { derivePhase, firstOpenLesson, lessonsFor, successCount, type LessonDef, type LessonPhase } from './lessons.ts';
@@ -228,8 +231,7 @@ import {
 } from './orient.ts';
 import {
   ALL_FB, CN_LABEL, CN_RUNGS, HOLDS, HOLD_ROTATION, SLICE_PAIR_MS, blockHoldLabel, bothBlocks, holdFor, isSlicePair, reholdAfterSlice, rungBlocks,
-  type CnRung, type Hold,
-} from './hold.ts';
+  type CnRung, type Hold, resolveSolver } from './hold.ts';
 import { CubeManager, clearSavedMacs, getSavedMacs } from './bluetooth.ts';
 
 type Mode = 'scramble' | 'solve';
@@ -267,6 +269,13 @@ interface State {
    *  moment), one token per reported turn; a slice pair is relabelled M / M' / M2
    *  once its second half lands. Display merges neighbours (mergeTurns). */
   movesShown: string[];
+  /** The same turns as your hands made them: positional, named for the model as
+   *  held at the step's start (a slice is one M, a suggested r one r). What grading
+   *  counts (STM) and replays — the reported turns would count an M twice and, after
+   *  it, replay a cube the hands aren't holding. Same length as movesShown. */
+  movesHeld: Move3x3[];
+  /** A route the app showed, being followed (followRoute) — null once you leave it. */
+  follow: Follow | null;
   placementIdx: number | null; // the framed candidate coaching aims at — see coachPick (null = the step-start pick)
   placementPinned: boolean; // user tapped a corner to aim — the pick stops second-guessing them
   solveReadyMs: number | null; // when the scramble completed — inspection runs until the first move
@@ -312,6 +321,12 @@ interface State {
     moves: Move3x3[];
     base: Cube3x3;
     baseLen: number;
+    /** The hand frame the route was planned in: its names stay in that hold (the
+     *  hands never re-hold), and the cube reports it as `turns`, ending each move in
+     *  `hands` (notation.ts toReported) — how the walk follows a slice or an r. */
+    hand: number;
+    turns: Move3x3[][];
+    hands: number[];
     seg?: { name: PatternName | null; from: number; to: number }[];
     roles?: MoveRole[];
     rebased?: boolean;
@@ -399,6 +414,15 @@ function is123(s: StepDef | null): s is StepDef {
 function handBlock(s: StepDef) {
   return s.prereqMask ?? coachPick(s).mask;
 }
+/** The step's solver for one of its targets. A Roux step searches the moves a Roux
+ *  solver makes (M, r — notation.ts), named for the model against the first block
+ *  it is held by (the pre-built one, else the target itself) and the hand frame the
+ *  search starts in: 0 from the step's start, state.handFrame from the live cube
+ *  (hold.ts resolveSolver — after an M, R r U M are other model faces). Others
+ *  pass through. */
+function solverFor(s: StepDef, mask: Cube3x3Mask, hand = 0): StepSolverConfig {
+  return s.solver.heldMoves ? resolveSolver(s.solver, s.prereqMask ?? mask, hand) : s.solver;
+}
 /** Re-hold after a timed slice pair through the block's axis (hold.ts: a physical
  *  M lands as two outer turns milliseconds apart). Only solve moves count: the
  *  turn that lands the scramble is not a slice of yours. */
@@ -415,8 +439,11 @@ function updateHandFrame(wasSolving: boolean) {
   const r = reholdAfterSlice(before, state.cube, fb, state.handFrame);
   state.handFrame = r.frame;
   state.slicePaired = n - 1;
-  // The two halves were one slice: show it as one.
-  if (r.slice) state.movesShown.splice(-2, 2, r.slice);
+  // The two halves were one slice: show it as one, and count it as one.
+  if (r.slice) {
+    state.movesShown.splice(-2, 2, r.slice);
+    state.movesHeld.splice(-2, 2, unrename([r.slice], holdFor(fb))[0]);
+  }
 }
 /** Shown turns with same-face neighbours combined, the way a solver writes them:
  *  quarter-turn reports R R read R2, M M read M2, and R R' cancels. */
@@ -523,14 +550,14 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
         last = scr;
         const cube = applyMoves(base, scr);
         if (first.candidateMasks.some((m) => isTargetSolved(cube, m))) continue;
-        const taught = humanSolveFromState(cube, first.canonicalMask, first.solver, 16);
+        const taught = humanSolveFromState(cube, first.canonicalMask, solverFor(first, first.canonicalMask), 16);
         if (!taught) continue;
         const names = classifyRoute(cube, taught, first.canonicalMask).map((e) => e.name);
         if (names.some((n) => n != null && want.has(n))) return scr;
       }
       return last; // nothing matched within budget — serve the last rather than stall
     }
-    const cfg = { ...first.solver, depthLimit: 16 };
+    const cfg = { ...solverFor(first, first.canonicalMask), depthLimit: 16 };
     const min = band.min ?? 1;
     const max = band.max ?? 99;
     const len = max >= 99 ? 16 : Math.min(16, max + 4);
@@ -564,7 +591,13 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
     const beo = isBlockEo(first);
     const prereq = beo ? blockEoPrereq(blockEoOrient) : first.prereqMask;
     const targetDone = (c: Cube3x3) => beo ? isBlockEoSolved(c, blockEoOrient) : first.candidateMasks.some((m) => isTargetSolved(c, m));
-    const buildCfg = { ...first.solver, depthLimit: 16 };
+    // The build is part of the scramble you apply, so it stays outer turns: the cube
+    // reports only those, and the scramble strip is checked against them. (A Roux
+    // second block's own search is deep — pd7 on R r U M — which an outer-turn build
+    // of the first block doesn't need.)
+    const buildCfg = first.solver.heldMoves
+      ? { moveSet: first.solver.moveSet, pruningDepth: 4, depthLimit: 16 }
+      : { ...first.solver, depthLimit: 16 };
     // Foundations difficulty cap: try for a case within the lesson's optimal
     // ceiling for half the budget, then accept any valid case — never stall.
     let fallback: Move3x3[] | null = null;
@@ -577,7 +610,7 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
       const cube = applyMoves(base, full);
       if (!isMaskSolvedState(cube, prereq) || targetDone(cube)) continue;
       if (lessonGen?.maxOptimal != null && attempt < 10) {
-        const opt = solveInFrames(cube, first.canonicalMask, first.solver)?.moves.length ?? 99;
+        const opt = solveInFrames(cube, first.canonicalMask, solverFor(first, first.canonicalMask))?.moves.length ?? 99;
         if (opt > lessonGen.maxOptimal) { fallback = full; continue; }
       }
       return full;
@@ -628,14 +661,14 @@ function makeScramble(base: Cube3x3, baseHistory: Move3x3[], stepsList: StepDef[
     const cube = applyMoves(base, moves);
     if (first.candidateMasks.some((m) => isTargetSolved(cube, m))) continue;
     if (wantPatterns) {
-      const taught = humanSolveFromState(cube, first.canonicalMask, first.solver, 16);
+      const taught = humanSolveFromState(cube, first.canonicalMask, solverFor(first, first.canonicalMask), 16);
       if (!taught) continue;
       const names = classifyRoute(cube, taught, first.canonicalMask).map((e) => e.name);
       if (!names.some((n) => n != null && wantPatterns.has(n))) continue;
       return moves;
     }
     if (lessonGen?.maxOptimal != null && attempt < 15) {
-      const opt = solveInFrames(cube, first.canonicalMask, first.solver)?.moves.length ?? 99;
+      const opt = solveInFrames(cube, first.canonicalMask, solverFor(first, first.canonicalMask))?.moves.length ?? 99;
       if (opt > lessonGen.maxOptimal) continue;
     }
     return moves;
@@ -734,6 +767,8 @@ function startScramble(base: Cube3x3, baseHistory: Move3x3[], explicit?: Move3x3
     movesThisStep: [],
     movesThisStepTs: [],
     movesShown: [],
+    movesHeld: [],
+    follow: null,
     placementIdx: null,
     placementPinned: false,
     solveReadyMs: null,
@@ -790,22 +825,49 @@ function step(move: Move3x3) {
   // Name the turn as you held the cube when you made it — before the turn can
   // change the hold (a slice's second half, or a switch of block).
   const shown = state.mode === 'solve' ? disp([move])[0] : move;
+  const held = renameMove(move, FRAMES[state.handFrame ?? 0]);
   state.cube = applyMove(state.cube, move);
   state.history.push(move);
   state.assist = survivingAssist();
   const wasSolving = state.mode === 'solve';
-  if (state.learn) { afterLearnMove(); return; } // walkthrough routes are outer turns
+  if (state.learn) { afterLearnMove(); return; } // the walk follows the route's own slices
   if (state.mode === 'solve') {
     // Free-EO stays axis-agnostic through the solve: detect reads the axis off the
     // finished state; gb/ro already pinned it at scramble time. No per-move axis work.
     state.movesThisStep.push(move);
     state.movesThisStepTs.push(Date.now());
     state.movesShown.push(shown);
+    state.movesHeld.push(held);
+    followRoute();
     if (state.solveStartMs == null) state.solveStartMs = Date.now(); // start timer on first move
     state.identify = null; // find-the-piece prompts are pre-solve scaffolding — first turn ends them
   }
   afterChange();
   updateHandFrame(wasSolving); // after afterChange: it re-picks the block the hold follows
+}
+
+/** Route-aware hand tracking. While a route the app showed (a hint, Show the route)
+ *  is being followed, the cube is walked along it as the cube reports it: an r
+ *  arrives as a lone L, exactly like an L, and only the route can say it was the r.
+ *  When a turn finishes one of the route's moves, the turns it took are shown and
+ *  counted as that move, and the hold is the route's. Leaving the route stops the
+ *  following; slices are then still caught by their timing (updateHandFrame). */
+function followRoute() {
+  const f = state.follow;
+  if (!f || !is123(currentStep())) return;
+  const before = f.done;
+  const r = followTurn(f, state.cube);
+  if (!r) { state.follow = null; return; }
+  state.handFrame = r.hand; // the route says how the hands hold it now
+  if (f.done === before) return; // part-way through a move (half an M, a quarter of R2)
+  if (r.finished) {
+    const n = state.movesShown.length - f.since;
+    state.movesShown.splice(f.since, n, dispAt([r.finished], f.hand)[0]);
+    state.movesHeld.splice(f.since, n, renameMove(r.finished, FRAMES[f.hand]));
+  }
+  // The route has named these turns: they can't open a timed slice pair.
+  state.slicePaired = state.movesThisStep.length - 1;
+  f.since = state.movesShown.length;
 }
 
 function afterLearnMove() {
@@ -823,6 +885,8 @@ function afterLearnMove() {
       state.movesThisStep = [];
       state.movesThisStepTs = [];
       state.movesShown = [];
+      state.movesHeld = [];
+      state.follow = null;
       state.placementIdx = null;
       state.placementPinned = false;
       state.handFrame = 0; // a new step starts held the usual way, centres home
@@ -834,29 +898,10 @@ function afterLearnMove() {
   // it the wrong face OR the wrong direction on the right face — re-plan from here
   // so the moves on screen lead home from where the cube actually is.
   const learn = state.learn!;
-  if (walkOnRoute(learn.base, learn.moves, state.cube).deviated) rebaseWalkthrough(s);
-}
-
-// Where the cube sits on the shown route, and whether it has left it. Walks the
-// route's prefix cube-states: the live cube matching prefix k means k tokens are
-// done. Matching none is a wrong turn to re-plan from — EXCEPT the benign case of
-// being one quarter into a half-turn token (an R done toward an R2), still on the
-// way there rather than off it (either quarter direction reaches the double).
-function walkOnRoute(base: Cube3x3, moves: Move3x3[], cur: Cube3x3): { done: number; deviated: boolean } {
-  const target = cur.encode();
-  let c = base;
-  if (c.encode() === target) return { done: 0, deviated: false };
-  for (let k = 0; k < moves.length; k++) {
-    if (moveAmount(moves[k]) === 2) {
-      const f = moveFace(moves[k]);
-      if (applyMove(c, f as Move3x3).encode() === target || applyMove(c, `${f}'` as Move3x3).encode() === target) {
-        return { done: k, deviated: false };
-      }
-    }
-    c = applyMove(c, moves[k]);
-    if (c.encode() === target) return { done: k + 1, deviated: false };
-  }
-  return { done: 0, deviated: true };
+  const walk = walkReported(learn.base, learn.turns, state.cube);
+  if (walk.deviated) { rebaseWalkthrough(s); return; }
+  // The route's own slices and wide turns re-hold the picture as you make them.
+  state.handFrame = walk.done ? learn.hands[walk.done - 1] : learn.hand;
 }
 
 function afterChange() {
@@ -883,6 +928,8 @@ function afterChange() {
       state.movesThisStep = [];
       state.movesThisStepTs = [];
       state.movesShown = [];
+      state.movesHeld = [];
+      state.follow = null;
       state.placementIdx = null;
       state.placementPinned = false;
       state.handFrame = 0; // a new step starts held the usual way, centres home
@@ -1006,7 +1053,7 @@ function checkStepCompletion() {
     // the model's names. In frame 0 all of this is exactly the old computation.
     const done = solvedStepMask(s);
     const solvedMask = done?.mask ?? s.canonicalMask;
-    const framed = isBlockEo(s) || isFreeEo(s) ? null : solveInFrames(state.stepStartCube, solvedMask, s.solver);
+    const framed = isBlockEo(s) || isFreeEo(s) ? null : solveInFrames(state.stepStartCube, solvedMask, solverFor(s, solvedMask));
     const gf = framed?.frame ?? 0;
     const gStart = inFrame(state.stepStartCube, gf);
     const optimalArr = isBlockEo(s)
@@ -1015,7 +1062,9 @@ function checkStepCompletion() {
       ? solveFromState(state.stepStartCube, eoMaskForStep(s, state.eoAxis), s.solver)
       : framed?.moves ?? null;
     const optimal = optimalArr ?? [];
-    const used = htmCount(state.movesThisStep);
+    // Your moves as your hands made them: STM, so a slice counts once like the
+    // ideal's (identical to HTM over the reported turns for every other step).
+    const used = mergeTurns(state.movesHeld).length;
     const caseLabel = classifyCase(gStart, s, optimal, solvedMask);
     state.lastResult = {
       step: s.label,
@@ -1051,7 +1100,7 @@ function checkStepCompletion() {
       let bestLen = optimalArr.length;
       let bestIdx = -1;
       for (let i = 0; i < s.candidateMasks.length; i++) {
-        const l = solveInFrames(state.stepStartCube, s.candidateMasks[i], s.solver, bestLen)?.moves.length;
+        const l = solveInFrames(state.stepStartCube, s.candidateMasks[i], solverFor(s, s.candidateMasks[i]), bestLen)?.moves.length;
         if (l != null) { bestLen = l; bestIdx = i; }
       }
       state.lastResult.rank = {
@@ -1070,13 +1119,15 @@ function checkStepCompletion() {
     // Named-pattern tags: what the TAUGHT route (the one Learn walks) uses,
     // and what the user's own HTM-simplified solve actually did.
     if (s.kind === 'block' && optimalArr) {
-      const taught = humanSolveFromState(gStart, solvedMask, s.solver) ?? optimalArr;
+      const taught = humanSolveFromState(gStart, solvedMask, cfgInFrame(solverFor(s, solvedMask), gf)) ?? optimalArr;
       const names = (rt: Move3x3[]) =>
         classifyRoute(gStart, rt, solvedMask).map((e) => e.name).filter((x): x is PatternName => x != null);
-      // Your solve is replayed in the frame you finished in; the taught route in
-      // the frame it was planned in.
-      const df = done?.frame ?? 0;
-      const yours = classifyRoute(inFrame(state.stepStartCube, df), movesToFrame(simplifyMoves(state.movesThisStep), df), solvedMask)
+      // Your solve is replayed as your hands made it (movesHeld: slices are slices,
+      // so the replay holds the cube the way you did), in the frame that replay
+      // finishes in; the taught route in the frame it was planned in.
+      const yourRoute = mergeTurns(state.movesHeld) as Move3x3[];
+      const df = Math.max(0, solvedFrame(applyMoves(state.stepStartCube, yourRoute), solvedMask));
+      const yours = classifyRoute(inFrame(state.stepStartCube, df), movesToFrame(yourRoute, df), solvedMask)
         .map((e) => e.name).filter((x): x is PatternName => x != null);
       state.lastResult.patterns = { ideal: names(taught), yours };
     }
@@ -1121,6 +1172,8 @@ function checkStepCompletion() {
       state.movesThisStep = [];
       state.movesThisStepTs = [];
       state.movesShown = [];
+      state.movesHeld = [];
+      state.follow = null;
       state.placementIdx = null;
       state.placementPinned = false;
       state.handFrame = 0; // a new step starts held the usual way, centres home
@@ -1274,6 +1327,8 @@ function handleFacelets(kociemba: string) {
       state.movesThisStep.push(...bridge);
       const now = Date.now();
       state.movesThisStepTs.push(...bridge.map(() => now));
+      state.movesShown.push(...disp(bridge));
+      state.movesHeld.push(...bridge.map((m) => renameMove(m, FRAMES[state.handFrame ?? 0])));
     }
     afterChange();
     render();
@@ -1290,7 +1345,10 @@ function handleManualMoves(text: string) {
   // scramble the cube view may already be rotated (block-preserving EO), but
   // the scramble text itself is always raw model notation.
   const toks = notationFrame() ? toModelMoves(parseMoves(text), solveRotation()) : parseMoves(text);
-  for (const tok of toks) step(tok);
+  // Fed in as the cube would report them: a typed M arrives as R L' (both halves in
+  // the same instant, so it re-holds like a real slice), a typed r as a lone L. The
+  // model only ever takes outer turns — a slice applied to it would move its centres.
+  for (const tok of reportedTurns(toks)) step(tok);
   render();
 }
 
@@ -1399,7 +1457,7 @@ function enterLearn() {
   if (!requireHistory()) return;
   const s = currentStep();
   if (!s) return;
-  const ideal = idealRoute(state.stepStartCube, s);
+  const ideal = idealRoute(state.stepStartCube, s, 0);
   if (ideal.length === 0) { state.status = 'Nothing to learn from here.'; render(); return; }
   state.helpUsed = 3; // a walkthrough is the full route — the rep can't count as solo
   // Abandon any lookahead rep in flight. Reachable: Show ideal is enabled during
@@ -1435,7 +1493,7 @@ function enterLearn() {
 // solver finds nothing from `base`. baseLen anchors progress to the moves made
 // after this point, so a re-plan measures from the cube's current position.
 function makeLearnState(base: Cube3x3, s: StepDef, rebased: boolean): NonNullable<State['learn']> | null {
-  const ideal = idealRoute(base, s);
+  const ideal = idealRoute(base, s, state.handFrame ?? 0);
   if (ideal.length === 0) return null;
   let seg: NonNullable<State['learn']>['seg'];
   let roles: MoveRole[] | undefined;
@@ -1447,7 +1505,9 @@ function makeLearnState(base: Cube3x3, s: StepDef, rebased: boolean): NonNullabl
     seg = classifyRoute(fBase, fIdeal, mask).map((e) => ({ name: e.name, from: e.from, to: e.to }));
     roles = routeRoles(fBase, fIdeal, mask);
   }
-  return { moves: ideal, base, baseLen: state.history.length, seg, roles, rebased };
+  const hand = state.handFrame ?? 0;
+  const rep = toReported(ideal, hand);
+  return { moves: ideal, base, baseLen: state.history.length, hand, turns: rep.turns, hands: rep.hands, seg, roles, rebased };
 }
 
 // Start the guided ideal replay. Assumes the cube has physically returned to the
@@ -1461,6 +1521,8 @@ function beginLearnWalkthrough() {
   state.movesThisStep = [];
   state.movesThisStepTs = [];
   state.movesShown = [];
+  state.movesHeld = [];
+  state.follow = null;
   state.stepDone[state.stepIndex] = false;
   state.assist = null;
   state.learn = learn;
@@ -1669,15 +1731,26 @@ function orientedEdges(cube: Cube3x3, s: StepDef): number {
 /** Teaching route for the current step, in MODEL frame so the shared disp()/
  * walkthrough pipeline can render it in the held frame. Free-EO solves the chosen
  * axis's orbit directly in the model frame (no state rotation, no translation). */
-function idealRoute(start: Cube3x3, s: StepDef): Move3x3[] {
+function idealRoute(start: Cube3x3, s: StepDef, hand: number): Move3x3[] {
   if (isBlockEo(s)) return humanSolveFromState(start, blockEoTarget(state.blockEoOrient), s.solver) ?? [];
   if (isFreeEo(s)) return humanSolveFromState(start, eoMaskForStep(s, state.eoAxis), s.solver) ?? [];
-  return movesFromFrame(coachRoute(start, s), coachFrame(s));
+  return movesFromFrame(coachRoute(start, s, hand), coachFrame(s));
 }
 /** The same teaching route in the COACHING frame's names, from `start` re-held
  *  in that frame — what piece and pattern analysis must replay it against. */
-function coachRoute(start: Cube3x3, s: StepDef): Move3x3[] {
-  return humanSolveFromState(inFrame(start, coachFrame(s)), activeMask(s), s.solver) ?? [];
+function coachRoute(start: Cube3x3, s: StepDef, hand: number): Move3x3[] {
+  const f = coachFrame(s);
+  const mask = activeMask(s);
+  const route = humanSolveFromState(inFrame(start, f), mask, cfgInFrame(solverFor(s, mask, hand), f)) ?? [];
+  // Stop where the target is done in any of its frames. The route is planned for
+  // one placement, so a Roux block could end with a turn of its own face (L) that
+  // only spins the finished block about its axis — completion never asks for it.
+  let c = inFrame(start, f);
+  for (let k = 0; k < route.length; k++) {
+    c = applyMove(c, route[k]);
+    if (isTargetSolved(c, mask)) return route.slice(0, k + 1);
+  }
+  return route;
 }
 // idealFromStart runs on every render and a deep 2×2×3 search costs ~130ms even
 // at pd5, so the block-step result is memoized by (step, placement, start state)
@@ -1693,7 +1766,7 @@ function idealLen(start: Cube3x3, s: StepDef): number | null {
   const key = `${s.id}:${s.candidateMasks.indexOf(mask)}:${start.encode()}`;
   if (idealMemo?.key !== key) {
     // Shortest over the target's frames — the same measure grading uses.
-    idealMemo = { key, len: solveInFrames(start, mask, s.solver)?.moves.length ?? null };
+    idealMemo = { key, len: solveInFrames(start, mask, solverFor(s, mask))?.moves.length ?? null };
   }
   return idealMemo.len;
 }
@@ -1760,13 +1833,20 @@ function notationFrame(): boolean {
 function disp(moves: Move3x3[]): Move3x3[] {
   return notationFrame() ? toDisplayMoves(moves, solveRotation()) : moves;
 }
+/** disp as the hands held the cube at hand frame `hand` — for a route planned then
+ *  (a walkthrough), whose later moves come after its own slices. */
+function dispAt(moves: Move3x3[], hand: number): Move3x3[] {
+  const s = currentStep();
+  if (!notationFrame() || !is123(s)) return disp(moves);
+  return toDisplayMoves(moves, [...FRAMES[hand], ...holdFor(handBlock(s))] as RotationMove[]);
+}
 
 function continuation(): Move3x3[] {
   const s = currentStep();
   if (!s) return [];
   // Teach the method route (human-ranked / build-then-extend); scoring still
   // uses the true optimal via idealFromStart().
-  return idealRoute(state.cube, s);
+  return idealRoute(state.cube, s, state.handFrame ?? 0);
 }
 function idealFromStart(): number | null {
   const s = currentStep();
@@ -1783,7 +1863,7 @@ function startPredict() {
   // Only from plain solving: starting a lookahead rep on top of a walkthrough or
   // another prompt would give two phases a claim on the same sticker taps.
   if (!s || s.kind !== 'block' || repPhase() !== 'solve') return;
-  const route = coachRoute(state.cube, s);
+  const route = coachRoute(state.cube, s, state.handFrame ?? 0);
   const two = route.length ? nextTwoFocusPieces(coachCube(s), activeMask(s), route) : null;
   if (!two) { state.status = 'Nothing to look ahead to — fewer than two pieces left.'; render(); return; }
   state.assist = null;
@@ -1875,10 +1955,12 @@ function assist(kind: 'nudge' | 'move' | 'ideal') {
     : null;
   const effective = kind === 'nudge' && !focus ? 'move' : kind;
   state.assist = { kind: effective, moves, focus, pattern, frame };
+  // Follow the route you were shown, so its r and slow M are read as it names them.
+  if (effective !== 'nudge' && is123(s)) state.follow = startFollow(state.cube, moves, state.handFrame ?? 0, state.movesShown.length);
   state.helpUsed = Math.max(state.helpUsed, effective === 'nudge' ? 1 : effective === 'move' ? 2 : 3);
   state.status =
     effective === 'nudge' ? `Hint: focus on the ${focus?.description ?? 'highlighted piece'} — pair and insert it.`
-    : effective === 'move' ? `Next move: ${moves[0]}`
+    : effective === 'move' ? `Next move: ${disp([moves[0]])[0]}`
     : 'Showing the ideal for this step — press “Walk it through” to try it guided.';
   render();
 }
@@ -1916,7 +1998,7 @@ function startLessonSolve() {
     }
     state.status = `Guided: ${def.outcome}`;
   } else if (phase === 'coached') {
-    const f = nextFocusPiece(coachCube(s), activeMask(s), coachRoute(state.cube, s));
+    const f = nextFocusPiece(coachCube(s), activeMask(s), coachRoute(state.cube, s, state.handFrame ?? 0));
     state.status = f ? `Coached: look for the ${f.description} first.` : `Coached: ${def.outcome}`;
   }
   // independent / done: the generic "Scrambled!" status stands.
@@ -2709,7 +2791,7 @@ function buildStepMeter(s: StepDef | null, info: { frac: number; caption: string
   // answer. The empty track still renders, so the pane keeps its shape.
   const conceal = concealsProgress(s);
   const wrap = el('div', 'step-meter');
-  const used = htmCount(state.movesThisStep);
+  const used = mergeTurns(state.movesHeld).length; // STM, as grading counts
   const hd = el('div', 'dock-hd');
   hd.appendChild(el('span', '', s ? `Step · ${s.label}` : 'No step'));
   if (state.trainMode === 'timed') {
@@ -3103,8 +3185,14 @@ function buildLearnPane(right: HTMLElement, s: StepDef) {
     : annotated
     ? 'Follow the route move by move — green done, red wrong turn. It is grouped by technique: each box is one named pattern doing one job.'
     : 'Follow the ideal move by move. Each turn goes green; a wrong turn shows red.'));
-  const { done, errorIndex } = progressOver(learn.moves, state.history.slice(learn.baseLen));
-  const shown = disp(learn.moves);
+  // Progress by cube state through the route as the cube reports it, so a slice
+  // counts as the one move it is (matching reported turns to route tokens by face
+  // can't: an M is two reported faces, an r a different face altogether).
+  const walk = walkReported(learn.base, learn.turns, state.cube);
+  const done = walk.done, errorIndex = walk.deviated ? walk.done : -1;
+  // Named in the hold the route was planned in: the hands never re-hold, so its
+  // names don't change when one of its slices re-holds the picture.
+  const shown = dispAt(learn.moves, learn.hand);
   const tok = (i: number) => {
     const cls = i < done ? 'tok done' : i === errorIndex ? 'tok error' : i === done ? 'tok next' : 'tok';
     const sp = el('span', cls);
@@ -3410,26 +3498,6 @@ function discardLastSolve() {
   nextScramble();
 }
 
-// Track progress through a token sequence at the face level: tokens completed in
-// order, plus the index of a token being applied with the wrong face -> red.
-function progressOver(tokens: Move3x3[], moves: Move3x3[]): { done: number; errorIndex: number } {
-  let ti = 0;
-  let acc = 0;
-  for (const mv of moves) {
-    if (ti >= tokens.length) break;
-    if (moveFace(mv) === moveFace(tokens[ti])) {
-      acc = (acc + moveAmount(mv)) % 4;
-      if (acc === moveAmount(tokens[ti]) % 4) {
-        ti++;
-        acc = 0;
-      }
-    } else {
-      return { done: ti, errorIndex: ti }; // turned the wrong face
-    }
-  }
-  return { done: ti, errorIndex: -1 };
-}
-
 // Scramble progress: how many leading tokens are done, and whether the cube is
 // currently OFF the scramble path (a wrong turn) — so the next token can go red.
 // Recovery-friendly: undoing the wrong move puts you back on the path.
@@ -3641,7 +3709,7 @@ render();
   // holds a rotated frame (the EO trainers), so feeding this straight back
   // would double-translate there — pass the DISPLAYED solution text instead.
   // Block steps hold no rotation by default, so round-tripping is safe.
-  ideal: () => { const s = currentStep(); return s ? idealRoute(state.cube, s) : []; },
+  ideal: () => { const s = currentStep(); return s ? idealRoute(state.cube, s, state.handFrame ?? 0) : []; },
 };
 
 // Tick the live timer (timed mode) without a full re-render.

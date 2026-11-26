@@ -18,10 +18,11 @@
 // bottom as well. Each rung adds to the one before; the final "any" rung is the
 // old accept-every-block behaviour. Guarded by scripts/hold-check.ts.
 
-import { applyMove, applyMoves, faceletString, newSolved, type Cube3x3, type Cube3x3Mask, type Move3x3, type RotationMove } from './engine-api.ts';
+import { applyMove, applyMoves, faceletString, newSolved, type Cube3x3, type Cube3x3Mask, type Move3x3, type RotationMove, type StepSolverConfig } from './engine-api.ts';
 import { MASK_123_LEFT, MASK_123_RIGHT, blockMaskFromRanges, side123Masks } from './blocks.ts';
 import { FRAMES, framesFor } from './frame.ts';
 import { FACE_COLOUR, rotateHighlight, rotatedFacelets, unrotateHighlight } from './orient.ts';
+import { heldMoveSet } from './notation.ts';
 
 // Centre facelets in faceletString's layout (U, then the L F R B rows, then D).
 const L_C = 22, D_C = 49;
@@ -94,6 +95,32 @@ export function holdFor(fb: Cube3x3Mask): RotationMove[] {
 export function blockHoldLabel(fb: Cube3x3Mask): string {
   const f = rotatedFacelets(SOLVED, holdFor(fb));
   return `${FACE_COLOUR[f[D_C]]}-bottom / ${FACE_COLOUR[f[L_C]]}-left`;
+}
+
+// --- the moves a Roux solver makes, for the model ----------------------------------
+const solverCache = new WeakMap<StepSolverConfig, WeakMap<Cube3x3Mask, Map<number, StepSolverConfig>>>();
+/** A step's solver config resolved against the first block it is held by: its held
+ *  moves (M, r — notation.ts) renamed for the model, so the solver searches them
+ *  against the model's masks directly. Configs without held moves pass through.
+ *
+ *  `hand` is the hand frame (main.ts handFrame): after an M the hands' U is a
+ *  different model face, so a set that isn't symmetric about the block's axis —
+ *  the second block's R r U M — names different model moves. (The first block's
+ *  full set is the same in every hand frame.) Searches from the step's start use
+ *  0; anything planned from the live cube uses the hand you're holding now. */
+export function resolveSolver(cfg: StepSolverConfig, fb: Cube3x3Mask, hand = 0): StepSolverConfig {
+  if (!cfg.heldMoves) return cfg;
+  let byFb = solverCache.get(cfg);
+  if (!byFb) solverCache.set(cfg, (byFb = new WeakMap()));
+  let byHand = byFb.get(fb);
+  if (!byHand) byFb.set(fb, (byHand = new Map()));
+  let r = byHand.get(hand);
+  if (!r) {
+    const view = [...FRAMES[hand], ...holdFor(fb)] as Move3x3[];
+    r = { ...cfg, moveSet: heldMoveSet(cfg.heldMoves, view), view };
+    byHand.set(hand, r);
+  }
+  return r;
 }
 
 // --- the hand frame ---------------------------------------------------------------

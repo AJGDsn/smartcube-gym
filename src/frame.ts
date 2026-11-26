@@ -40,15 +40,9 @@ import {
   type Cube3x3Mask, type Move3x3, type StepSolverConfig,
 } from './engine-api.ts';
 import { NET_COORDS } from './blocks.ts';
+import { FRAMES, rename, unrename } from './notation.ts';
 
-/** The 24 whole-cube rotations as move lists; index 0 is the identity. */
-export const FRAMES: readonly Move3x3[][] = (() => {
-  const tops = [[], ['x'], ['x2'], ["x'"], ['z'], ["z'"]];
-  const spins = [[], ['y'], ['y2'], ["y'"]];
-  return tops.flatMap((t) => spins.map((s) => [...t, ...s] as Move3x3[]));
-})();
-
-const TURNS = ['U', 'D', 'L', 'R', 'F', 'B'].flatMap((f) => ['', '2', "'"].map((x) => f + x)) as Move3x3[];
+export { FRAMES };
 
 // A cube whose 54 stickers are all distinct: turning it shows where every
 // facelet goes. Slot j of the turned cube holds what was at index perm[j].
@@ -71,26 +65,30 @@ export function faceletToModel(j: number, f: number): number {
 }
 
 // Moves between frames: the turn X that does in frame f what m does in the
-// model — turning then re-holding equals re-holding then turning.
-const MOVE_TO_FRAME: readonly Map<Move3x3, Move3x3>[] = FRAMES.map((r) => {
-  const out = new Map<Move3x3, Move3x3>();
-  for (const m of TURNS) {
-    const want = permOf([m, ...r]).join();
-    const x = TURNS.find((t) => permOf([...r, t]).join() === want);
-    if (!x) throw new Error(`frame ${r.join(' ')}: no turn matches ${m}`);
-    out.set(m, x);
-  }
-  return out;
-});
-const MOVE_FROM_FRAME: readonly Map<Move3x3, Move3x3>[] = MOVE_TO_FRAME.map((t) => new Map([...t].map(([m, x]) => [x, m])));
-
+// model — turning then re-holding equals re-holding then turning. Any layer turn
+// (slices and wide turns too) — notation.ts reads them off the engine.
 /** Model moves renamed as frame f sees them. */
 export function movesToFrame(moves: readonly Move3x3[], f: number): Move3x3[] {
-  return f === 0 ? [...moves] : moves.map((m) => MOVE_TO_FRAME[f].get(m) ?? m);
+  return f === 0 ? [...moves] : rename(moves, FRAMES[f]);
 }
-/** Frame-f moves renamed as the model (and so the smart cube) sees them. */
+/** Frame-f moves renamed as the model sees them (positional: a slice stays a slice —
+ *  notation.ts toReported says what the cube itself would send). */
 export function movesFromFrame(moves: readonly Move3x3[], f: number): Move3x3[] {
-  return f === 0 ? [...moves] : moves.map((m) => MOVE_FROM_FRAME[f].get(m) ?? m);
+  return f === 0 ? [...moves] : unrename(moves, FRAMES[f]);
+}
+
+/** A solver config for searching in frame f. Outer-turn sets are the same in every
+ *  frame; a set with slices or wide turns (Roux, notation.ts) is renamed, or the
+ *  search in a frame that turns its axis would turn the wrong slice. */
+export function cfgInFrame(cfg: StepSolverConfig, f: number): StepSolverConfig {
+  if (f === 0 || cfg.moveSet.every((m) => 'UDLRFB'.includes(m[0]))) return cfg;
+  // A route in frame f's names reads in the hands as: back to the model, then the view.
+  const inv = [...FRAMES[f]].reverse().map((r) => (r.endsWith('2') ? r : r.endsWith("'") ? r[0] : `${r}'`) as Move3x3);
+  return {
+    ...cfg,
+    moveSet: rename(cfg.moveSet, FRAMES[f]).sort(),
+    view: cfg.view ? [...inv, ...cfg.view] : undefined,
+  };
 }
 
 /** The cube re-held in frame f (a real engine cube, so EO comes along). */
@@ -159,7 +157,8 @@ export function solveInFrames(
   let limit = Math.min(cfg.depthLimit, below - 1);
   for (const f of framesFor(mask)) {
     if (limit < 0) break;
-    const moves = solveFromState(inFrame(start, f), mask, limit === cfg.depthLimit ? cfg : { ...cfg, depthLimit: limit });
+    const fc = cfgInFrame(cfg, f);
+    const moves = solveFromState(inFrame(start, f), mask, limit === cfg.depthLimit ? fc : { ...fc, depthLimit: limit });
     if (moves && moves.length <= limit) {
       best = { moves, frame: f };
       limit = moves.length - 1;

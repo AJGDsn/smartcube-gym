@@ -25,6 +25,13 @@ export interface StepSolverConfig {
   moveSet: readonly Move3x3[];
   pruningDepth: number;
   depthLimit: number;
+  /** Roux steps: the moves as the hands name them with the block held bottom-left
+   *  (M, r — notation.ts). `moveSet` stays outer turns until hold.ts resolveSolver
+   *  renames these for the model against a particular block. */
+  heldMoves?: readonly Move3x3[];
+  /** Set by resolveSolver: the rotation that names this config's moves as the hands
+   *  see them (model → held), so human-solve can judge comfort in the hands. */
+  view?: readonly Move3x3[];
 }
 
 // --- state helpers ---
@@ -123,7 +130,10 @@ export function maskProgress(state: Cube3x3, mask: Cube3x3Mask): number {
 
 const tableCache = new Map<string, PruningTable>();
 function maskKey(mask: Cube3x3Mask, cfg: StepSolverConfig): string {
-  return `${mask.solvedFaceletIndices.join(',')}|${mask.eoFaceletIndices?.join(',') ?? ''}@${cfg.pruningDepth}#${cfg.moveSet.length}`;
+  // The move set by content, not length: Roux sets for different blocks are the
+  // same size but different moves (notation.ts heldMoveSet), and sharing a table
+  // between them would prune with the wrong distances.
+  return `${mask.solvedFaceletIndices.join(',')}|${mask.eoFaceletIndices?.join(',') ?? ''}@${cfg.pruningDepth}#${[...cfg.moveSet].sort().join(' ')}`;
 }
 
 function getTable(mask: Cube3x3Mask, cfg: StepSolverConfig): PruningTable {

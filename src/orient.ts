@@ -19,7 +19,8 @@ import {
   type Move3x3,
   type RotationMove,
 } from './engine-api.ts';
-import { translateMoves, invertMoves, MOVE_PERMS } from './engine/puzzles/cube3x3/index.ts';
+import { MOVE_PERMS } from './engine/puzzles/cube3x3/index.ts';
+import { rename, unrename } from './notation.ts';
 
 // --- solve axes (extensible: add 'wy' (white/yellow up-front) later) ---
 export type SolveAxis = 'gb' | 'ro';
@@ -66,13 +67,15 @@ export function orientLabel(rots: readonly RotationMove[]): string {
 }
 
 /** Model-frame moves -> what the solver should read/perform in the held frame. */
+// Through notation.ts, not the engine's translateMoves: that one names slices
+// wrongly under half-turn rotations, and routes now carry M and r.
 export function toDisplayMoves(moves: Move3x3[], rots: readonly RotationMove[]): Move3x3[] {
-  return translateMoves(moves, rots);
+  return rename(moves, rots);
 }
 
 /** Held-frame (typed) moves -> model frame. */
 export function toModelMoves(moves: Move3x3[], rots: readonly RotationMove[]): Move3x3[] {
-  return translateMoves(moves, invertMoves([...rots]));
+  return unrename(moves, rots);
 }
 
 /** Facelet string of the cube as seen in the held orientation. */

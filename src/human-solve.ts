@@ -47,6 +47,7 @@ import {
   type Move3x3,
   type StepSolverConfig,
 } from './engine-api.ts';
+import { rename } from './notation.ts';
 
 // How many optimal solutions to rank over. The multi-solver returns a band of
 // lengths (optimal .. optimal+2); RANK_COUNT just needs to be wide enough to
@@ -109,7 +110,10 @@ function milestonesOf(box: BlockBox): [Cube3x3Mask, Cube3x3Mask] {
 // Comfort cost (lower = friendlier). D/B moves (hard to see/turn) dominate, so
 // a back/bottom-free route always wins even at +1/+2 length; among equally
 // comfortable routes prefer the shorter, then fewer face switches (regrips).
-function comfortCost(sol: Move3x3[]): number {
+// Judged in the hands' names when the config says how the cube is held (a Roux
+// 1×2×3 is held block bottom-left, so the model's D/B are not the awkward faces).
+function comfortCost(route: Move3x3[], view?: readonly Move3x3[]): number {
+  const sol = view ? rename(route, view) : route;
   let dB = 0;
   let switches = 0;
   for (let i = 0; i < sol.length; i++) {
@@ -120,19 +124,43 @@ function comfortCost(sol: Move3x3[]): number {
   return dB * 100 + sol.length * 2 + switches;
 }
 
+const amount = (m: string) => (m.endsWith('2') ? 2 : m.endsWith("'") ? 3 : 1);
+const layer = (m: string) => m.replace(/['2]$/, '');
+/** Two routes run back to back, with turns of the same layer at the seam combined
+ *  (U′ then U cancels; U then U reads U2). Same cube state, never longer. */
+export function joinRoutes(a: readonly Move3x3[], b: readonly Move3x3[]): Move3x3[] {
+  const out = [...a];
+  for (const m of b) {
+    const last = out[out.length - 1];
+    if (last && layer(last) === layer(m)) {
+      out.pop();
+      const k = (amount(last) + amount(m)) % 4;
+      if (k) out.push((layer(m) + ['', '', '2', "'"][k]) as Move3x3);
+    } else out.push(m);
+  }
+  return out;
+}
+
 /** Most comfortable solution within (optimal + SLACK) moves, or null if none.
  *  Bounding to the band keeps the length cost small while letting us trade a
  *  couple of moves to eliminate back/bottom turns. */
-function rankedComfort(cube: Cube3x3, mask: Cube3x3Mask, cfg: StepSolverConfig, rankCount: number): Move3x3[] | null {
-  const sols = solveFromStateMulti(cube, mask, cfg, rankCount);
-  if (sols.length === 0) return null;
+function rankedComfort(
+  cube: Cube3x3, mask: Cube3x3Mask, cfg: StepSolverConfig, rankCount: number, after?: Move3x3,
+): Move3x3[] | null {
+  const all = solveFromStateMulti(cube, mask, cfg, rankCount);
+  if (all.length === 0) return null;
+  // Following another stage: don't open on the layer it ended on, or the seam reads
+  // "U′ U" — turning straight back through the milestone it just built (seen as
+  // "R′ R …" in the hands' names). Only if every route does is one kept.
+  const fresh = after ? all.filter((sol) => !sol.length || layer(sol[0]) !== layer(after)) : all;
+  const sols = fresh.length ? fresh : all;
   let minLen = Infinity;
   for (const s of sols) if (s.length < minLen) minLen = s.length;
   let best: Move3x3[] | null = null;
   let bestCost = Infinity;
   for (const s of sols) {
     if (s.length > minLen + SLACK) continue; // bound the length cost
-    const c = comfortCost(s);
+    const c = comfortCost(s, cfg.view);
     if (c < bestCost) {
       best = s;
       bestCost = c;
@@ -181,10 +209,11 @@ export function humanSolveFromState(
   const stage1 = isMaskSolvedState(cube, via) ? [] : rankedComfort(cube, via, cfg, rankCount);
   if (stage1 === null) return solveFromState(cube, mask, cfg); // milestone unsolvable → fall back
   const mid = applyMoves(cube, stage1);
-  const stage2 = rankedComfort(mid, mask, cfg, rankCount);
+  const stage2 = rankedComfort(mid, mask, cfg, rankCount, stage1[stage1.length - 1]);
   if (stage2 === null) return solveFromState(cube, mask, cfg);
 
-  const trail = [...stage1, ...stage2];
+  // If no stage-2 route avoided the seam's layer, combine the seam's turns.
+  const trail = joinRoutes(stage1, stage2);
   // Safety: the staged trail must actually reach the goal; if not, fall back.
   if (!isMaskSolvedState(applyMoves(cube, trail), mask)) return solveFromState(cube, mask, cfg);
   return trail;

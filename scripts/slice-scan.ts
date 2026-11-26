@@ -32,6 +32,7 @@ import {
   TRAINERS, STEP_PAIR, STEP_221, STEP_222_FROM_221, STEP_222_RECOVERY, STEP_223_BUILD, STEP_223_EXT,
   type StepDef,
 } from '../src/steps.ts';
+import { resolveSolver } from '../src/hold.ts';
 
 const samples = Number(process.argv[2] ?? '3');
 
@@ -109,9 +110,13 @@ console.log('Only disagreements are listed: appâ‰ hand = today\'s bug, proposedâ
 for (const step of steps.values()) {
   const cands = step.candidateMasks;
   const built: Cube3x3[] = [];
-  for (let k = 0; built.length < samples && k < samples * 3; k++) {
+  // A Roux step's held moves (M, r) resolved for its block; the second block's
+  // R r U M can't build from a full scramble at all, so it takes the U-layer path.
+  const cfg = !step.solver.heldMoves ? step.solver
+    : step.prereqMask ? null : resolveSolver(step.solver, step.canonicalMask);
+  for (let k = 0; cfg && built.length < samples && k < samples * 3; k++) {
     const start = applyMoves(newSolved(), scramble(20));
-    const sol = solveFromState(start, step.canonicalMask, step.solver);
+    const sol = solveFromState(start, step.canonicalMask, cfg);
     if (sol) built.push(applyMoves(start, sol));
   }
   // A drill whose target can't be reached from a full scramble within the
